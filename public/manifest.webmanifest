@@ -2,7 +2,7 @@
   "id": "./",
   "name": "Sushi Loop",
   "short_name": "Sushi Loop",
-  "description": "A cozy sushi conveyor puzzle. Serve matching orders and keep the belt moving.",
+  "description": "A cozy, untimed sushi conveyor game. Serve happy guests and save your best local runs.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
