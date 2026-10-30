@@ -1,8 +1,8 @@
-/** Pure, seeded simulation. Positions are clockwise laps on twelve fixed belt slots. */
+/** Pure, seeded simulation. Positions are clockwise laps on fixed belt slots. */
 export const SUSHI_TYPES = ['salmon', 'tuna', 'maki', 'shrimp', 'tamago'] as const;
 export type SushiType = typeof SUSHI_TYPES[number];
 export type Phase = 'ready' | 'playing' | 'paused' | 'lost';
-export const RULES = { capacity: 12, speed: 0.075, queueDepth: 5, replacementDelay: 1.6 } as const;
+export const RULES = { capacity: 18, speed: 0.105, orderMin: 4, orderMax: 7, queueDepth: 5, replacementDelay: 1.6 } as const;
 export const STATIONS = [0.125, 0.375, 0.625, 0.875] as const;
 export interface Customer { id: number; type: SushiType; quantity: number; remaining: number; }
 export interface Seat { customer: Customer | null; returnsIn: number; }
@@ -15,7 +15,7 @@ function sushi(s: GameState): SushiType { return SUSHI_TYPES[Math.floor(random(s
 function customer(s: GameState): Customer {
   const available = [...new Set(s.queues.flat())];
   const type = available[Math.floor(random(s) * available.length)];
-  const quantity = 2 + Math.floor(random(s) * 3);
+  const quantity = RULES.orderMin + Math.floor(random(s) * (RULES.orderMax - RULES.orderMin + 1));
   return { id: s.nextId++, type, quantity, remaining: quantity };
 }
 function event(s: GameState, detail: Omit<GameEvent, 'id'>) { s.events.push({ id: s.nextId++, ...detail }); s.events = s.events.slice(-30); }

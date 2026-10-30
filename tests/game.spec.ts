@@ -25,6 +25,12 @@ test('tap advances the queue, preserves controls, and fixed belt slots never ove
   page.on('requestfailed', request => errors.push(`${request.url()}: ${request.failure()?.errorText}`));
   await start(page);
   await expectNoOverflow(page);
+  const initialOrders = await page.locator('.guest').evaluateAll(nodes => nodes.map(node => Number(node.getAttribute('data-remaining'))));
+  expect(initialOrders).toHaveLength(4);
+  for (const quantity of initialOrders) {
+    expect(quantity).toBeGreaterThanOrEqual(4);
+    expect(quantity).toBeLessThanOrEqual(7);
+  }
   const lane = page.locator('[data-lane="0"]');
   const node = await lane.elementHandle();
   const second = await lane.locator('.piece').nth(1).innerHTML();
@@ -35,7 +41,7 @@ test('tap advances the queue, preserves controls, and fixed belt slots never ove
   await hold(page, 1);
   await page.clock.runFor(2500);
   await page.mouse.up();
-  await expect(page.locator('.slot')).toHaveCount(12);
+  await expect(page.locator('.slot')).toHaveCount(18);
   const geometry = await page.locator('.plate').evaluateAll(nodes => nodes.map(node => {
     const rect = node.getBoundingClientRect(); return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
   }));
@@ -139,11 +145,22 @@ test('real completed orders appear in local rankings after reload', async ({ pag
   test.setTimeout(60000);
   await start(page);
   for (let step = 0; step < 100 && await page.locator('#served').textContent() === '0'; step++) {
-    const requests = await page.locator('.guest').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-type')));
+    const needs = await page.locator('.guest').evaluateAll(nodes => nodes.reduce<Record<string, number>>((counts, node) => {
+      const type = node.getAttribute('data-type');
+      if (type) counts[type] = (counts[type] || 0) + Number(node.getAttribute('data-remaining'));
+      return counts;
+    }, {}));
+    const traveling = await page.locator('.plate').evaluateAll(nodes => nodes.reduce<Record<string, number>>((counts, node) => {
+      const type = node.getAttribute('data-type')!;
+      counts[type] = (counts[type] || 0) + 1;
+      return counts;
+    }, {}));
     const labels = await page.locator('.lane').evaluateAll(nodes => nodes.map(node => node.getAttribute('aria-label') || ''));
-    const lane = labels.findIndex(label => requests.some(type => type && label.toLowerCase().includes(`send ${type}.`)));
-    await page.keyboard.press(String((lane >= 0 ? lane : step % 5) + 1));
-    await page.clock.runFor(1200);
+    const lane = labels.findIndex(label => Object.entries(needs).some(([type, quantity]) => quantity > (traveling[type] || 0) && label.toLowerCase().includes(`send ${type}.`)));
+    // Wait for plates already traveling before clearing another queue front.
+    const allNeededTraveling = Object.entries(needs).every(([type, quantity]) => quantity <= (traveling[type] || 0));
+    if (lane >= 0 || !allNeededTraveling) await page.keyboard.press(String((lane >= 0 ? lane : step % 5) + 1));
+    await page.clock.runFor(550);
   }
   const served = Number(await page.locator('#served').textContent());
   expect(served).toBeGreaterThan(0);
@@ -154,7 +171,7 @@ test('real completed orders appear in local rankings after reload', async ({ pag
   await expect(page.locator('.ranking-list li').first()).toContainText(`${served} ${served === 1 ? 'guest' : 'guests'}`);
 });
 
-test('a full twelve-slot belt ends the run through ordinary lane input', async ({ page }) => {
+test('a full eighteen-slot belt ends the run through ordinary lane input', async ({ page }) => {
   test.setTimeout(60000);
   await start(page);
   for (let step = 0; step < 160 && !(await page.getByRole('dialog').isVisible()); step++) {
@@ -162,19 +179,22 @@ test('a full twelve-slot belt ends the run through ordinary lane input', async (
     const labels = await page.locator('.lane').evaluateAll(nodes => nodes.map(node => node.getAttribute('aria-label') || ''));
     const lane = labels.findIndex(label => !requests.some(type => type && label.toLowerCase().includes(`send ${type}.`)));
     await page.keyboard.press(String((lane < 0 ? 0 : lane) + 1));
-    await page.clock.runFor(1150);
+    await page.clock.runFor(550);
   }
   await expect(page.getByRole('dialog')).toContainText('A full belt');
-  await expect(page.locator('#capacity')).toHaveText('12 / 12');
-  await expect(page.locator('.plate')).toHaveCount(12);
-  const plates = await page.locator('.plate').evaluateAll(nodes => nodes.map(node => {
-    const rect = node.getBoundingClientRect();
-    return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2, width: rect.width, height: rect.height };
-  }));
-  for (let i = 0; i < plates.length; i++) for (let j = i + 1; j < plates.length; j++) {
-    const dx = (plates[i].x - plates[j].x) / ((plates[i].width + plates[j].width) / 2);
-    const dy = (plates[i].y - plates[j].y) / ((plates[i].height + plates[j].height) / 2);
-    expect(dx * dx + dy * dy).toBeGreaterThanOrEqual(1);
+  await expect(page.locator('#capacity')).toHaveText('18 / 18');
+  await expect(page.locator('.plate')).toHaveCount(18);
+  for (const width of [390, 320]) {
+    await page.setViewportSize({ width, height: 844 });
+    const plates = await page.locator('.plate').evaluateAll(nodes => nodes.map(node => {
+      const rect = node.getBoundingClientRect();
+      return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2, width: rect.width, height: rect.height };
+    }));
+    for (let i = 0; i < plates.length; i++) for (let j = i + 1; j < plates.length; j++) {
+      const dx = (plates[i].x - plates[j].x) / ((plates[i].width + plates[j].width) / 2);
+      const dy = (plates[i].y - plates[j].y) / ((plates[i].height + plates[j].height) / 2);
+      expect(dx * dx + dy * dy).toBeGreaterThanOrEqual(1);
+    }
   }
 });
 
