@@ -46,8 +46,16 @@ test('pause freezes the conveyor and timer; keyboard resumes and launches', asyn
   await expect(page.getByRole('dialog')).toBeHidden();
   await page.clock.runFor(1200);
   await expect(page.locator('#time')).not.toHaveText(time!);
+  const lane = page.locator('[data-lane="4"]');
+  const nextPiece = await lane.locator('.piece').nth(1).innerHTML();
+  const existingPlates = await page.locator('#plates').evaluateHandle(container => Array.from(container.children));
   await page.keyboard.press('5');
-  await expect(page.locator('.plate')).toHaveCount(2);
+  await expect.poll(() => lane.locator('.piece').first().innerHTML()).toBe(nextPiece);
+  // Earlier plates can be eaten while time advances; check the new launch itself.
+  await expect.poll(() => page.locator('.plate').evaluateAll(
+    (elements, previous) => elements.some(element => !previous.includes(element)), existingPlates,
+  )).toBe(true);
+  await existingPlates.dispose();
 });
 
 test('help explains controls and a fresh shift resets play', async ({ page }) => {
