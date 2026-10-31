@@ -4,6 +4,7 @@ import { readRanking, recordResult } from './ranking';
 import { createGame, startGame, restartGame, pauseGame, resumeGame, launchPlate, tick, canLaunch, canRepeatLaunch, RULES, type SushiType } from './engine';
 import { sushiSvg, avatarSvg, chefSvg, blossomSvg } from './art';
 const app = document.querySelector<HTMLDivElement>('#app')!;
+app.style.setProperty('--belt-item-size', `${Math.min(10, 180 / RULES.capacity)}%`);
 const read = (key:string, fallback:string) => { try { return localStorage.getItem(key) || fallback; } catch { return fallback; } };
 const save = (key:string,value:string) => { try { localStorage.setItem(key,value); } catch {} };
 let best = Number(read('sushi-loop-guests-best','0')) || 0;
@@ -36,7 +37,7 @@ function openHelp() { clearHold(); help=true; if(state.phase==='playing') state=
 el('help').onclick=openHelp;
 function openRanking() { clearHold(); ranking=true; if(state.phase==='playing') state=pauseGame(state); lastPhase=''; render(); }
 el('ranking').onclick=openRanking;
-function launch(index:number) { if(!canLaunch(state)) return; state=launchPlate(state,index); nextRepeat=performance.now()+RULES.repeatInterval*1000; tone(360+index*70); lanes[index].classList.remove('launching'); void lanes[index].offsetWidth; lanes[index].classList.add('launching'); render(); }
+function launch(index:number) { if(!canLaunch(state)) return; state=launchPlate(state,index); nextRepeat=performance.now()+RULES.repeatInterval*1000; tone(360+index*70); render(); }
 lanes.forEach((button,i)=> {
  button.onpointerdown=event=> { if(event.button!==0 || state.phase!=='playing' || held) return; event.preventDefault(); button.focus({preventScroll:true}); button.setPointerCapture(event.pointerId); held={lane:i,pointer:event.pointerId}; button.classList.add('held'); launch(i); };
  button.onpointermove=event=> { if(held?.pointer!==event.pointerId) return; const rect=button.getBoundingClientRect(); if(event.clientX<rect.left || event.clientX>rect.right || event.clientY<rect.top || event.clientY>rect.bottom) clearHold(); };

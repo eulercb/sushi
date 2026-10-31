@@ -12,6 +12,21 @@ async function expectNoOverflow(page: Page) {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 }
 const queues = (page: Page) => page.locator('.lane-pieces').evaluateAll(nodes => nodes.map(node => node.innerHTML));
+async function expectSeparatedPlates(page: Page) {
+  const plates = await page.locator('.plate').evaluateAll(nodes => nodes.map(node => {
+    const rect = node.getBoundingClientRect();
+    return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2, width: rect.width, height: rect.height };
+  }));
+  for (const plate of plates) {
+    expect(plate.width).toBeGreaterThan(0);
+    expect(plate.height).toBeGreaterThan(0);
+  }
+  for (let i = 0; i < plates.length; i++) for (let j = i + 1; j < plates.length; j++) {
+    const dx = (plates[i].x - plates[j].x) / ((plates[i].width + plates[j].width) / 2);
+    const dy = (plates[i].y - plates[j].y) / ((plates[i].height + plates[j].height) / 2);
+    expect(dx * dx + dy * dy).toBeGreaterThanOrEqual(1);
+  }
+}
 async function hold(page: Page, lane = 0) {
   const box = await page.locator(`[data-lane="${lane}"]`).boundingBox();
   await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
@@ -41,14 +56,9 @@ test('tap advances the queue, preserves controls, and fixed belt slots never ove
   await hold(page, 1);
   await page.clock.runFor(2500);
   await page.mouse.up();
-  await expect(page.locator('.slot')).toHaveCount(18);
-  const geometry = await page.locator('.plate').evaluateAll(nodes => nodes.map(node => {
-    const rect = node.getBoundingClientRect(); return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
-  }));
-  expect(geometry.length).toBeGreaterThan(1);
-  for (let i = 0; i < geometry.length; i++) for (let j = i + 1; j < geometry.length; j++) {
-    expect(Math.hypot(geometry[i].x - geometry[j].x, geometry[i].y - geometry[j].y)).toBeGreaterThan(24);
-  }
+  await expect(page.locator('.slot')).toHaveCount(40);
+  expect(await page.locator('.plate').count()).toBeGreaterThan(1);
+  await expectSeparatedPlates(page);
   expect(errors).toEqual([]);
 });
 
@@ -89,7 +99,7 @@ test('rapid taps reserve exact foods, pause the belt, and load FIFO into separat
     food: node.getAttribute('data-type'), slot: Number(node.getAttribute('data-slot')),
   })));
   expect(plates.map(plate => plate.food)).toEqual(choices.map(choice => choice.food));
-  expect(plates.map(plate => plate.slot)).toEqual([(originalSlot + 16) % 18, (originalSlot + 17) % 18, originalSlot]);
+  expect(plates.map(plate => plate.slot)).toEqual([(originalSlot + 38) % 40, (originalSlot + 39) % 40, originalSlot]);
   expect(new Set(plates.map(plate => plate.slot)).size).toBe(3);
   expect(await queues(page)).toEqual(reservedQueues);
 });
@@ -281,10 +291,10 @@ test('real completed orders appear in local rankings after reload', async ({ pag
   await expect(page.locator('.ranking-list li').first()).toContainText(`${served} ${served === 1 ? 'guest' : 'guests'}`);
 });
 
-test('a full eighteen-slot belt ends the run through ordinary lane input', async ({ page }) => {
-  test.setTimeout(60000);
+test('a full forty-slot belt ends the run through ordinary lane input', async ({ page }) => {
+  test.setTimeout(90000);
   await start(page);
-  for (let step = 0; step < 160 && !(await page.getByRole('dialog').isVisible()); step++) {
+  for (let step = 0; step < 320 && !(await page.getByRole('dialog').isVisible()); step++) {
     const requests = await page.locator('.guest').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-type')));
     const fronts = await page.locator('.lane').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-type') || ''));
     const lane = fronts.findIndex(front => !requests.includes(front));
@@ -292,19 +302,13 @@ test('a full eighteen-slot belt ends the run through ordinary lane input', async
     await page.clock.runFor(550);
   }
   await expect(page.getByRole('dialog')).toContainText('A full belt');
-  await expect(page.locator('#capacity')).toHaveText('18 / 18');
-  await expect(page.locator('.plate')).toHaveCount(18);
+  await expect(page.locator('#capacity')).toHaveText('40 / 40');
+  await expect(page.locator('.plate')).toHaveCount(40);
   for (const width of [390, 320]) {
     await page.setViewportSize({ width, height: 844 });
-    const plates = await page.locator('.plate').evaluateAll(nodes => nodes.map(node => {
-      const rect = node.getBoundingClientRect();
-      return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2, width: rect.width, height: rect.height };
-    }));
-    for (let i = 0; i < plates.length; i++) for (let j = i + 1; j < plates.length; j++) {
-      const dx = (plates[i].x - plates[j].x) / ((plates[i].width + plates[j].width) / 2);
-      const dy = (plates[i].y - plates[j].y) / ((plates[i].height + plates[j].height) / 2);
-      expect(dx * dx + dy * dy).toBeGreaterThanOrEqual(1);
-    }
+    await expectSeparatedPlates(page);
+    const slots = await page.locator('.plate').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-slot')));
+    expect(new Set(slots).size).toBe(40);
   }
 });
 
@@ -316,6 +320,30 @@ test('small phone keeps the intro and game within the viewport', async ({ page }
   await page.locator('#primary').tap();
   await expectNoOverflow(page);
   for (const lane of await page.locator('.lane').all()) await expect(lane).toBeInViewport();
+  for (const viewport of [{ width: 320, height: 568 }, { width: 390, height: 844 }, { width: 1440, height: 900 }]) {
+    await page.setViewportSize(viewport);
+    for (const lane of await page.locator('.lane').all()) {
+      const laneBounds = await lane.boundingBox();
+      expect(laneBounds).not.toBeNull();
+      const previews = await lane.locator('.piece svg').evaluateAll(nodes => nodes.map(node => {
+        const rect = node.getBoundingClientRect();
+        return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, width: rect.width, height: rect.height };
+      }));
+      expect(previews).toHaveLength(5);
+      for (const preview of previews) {
+        expect(preview.width).toBeGreaterThan(0);
+        expect(preview.height).toBeGreaterThan(0);
+        expect(preview.left).toBeGreaterThanOrEqual(laneBounds!.x);
+        expect(preview.right).toBeLessThanOrEqual(laneBounds!.x + laneBounds!.width);
+        expect(preview.top).toBeGreaterThanOrEqual(laneBounds!.y);
+        expect(preview.bottom).toBeLessThanOrEqual(laneBounds!.y + laneBounds!.height);
+      }
+      for (let i = 0; i < previews.length; i++) for (let j = i + 1; j < previews.length; j++) {
+        const a = previews[i], b = previews[j];
+        expect(a.bottom <= b.top || b.bottom <= a.top || a.right <= b.left || b.right <= a.left).toBe(true);
+      }
+    }
+  }
 });
 
 test('installed service worker caches the app and playable offline reload', async ({ page, context }) => {

@@ -2,7 +2,7 @@
 
 A cozy, mobile-first sushi conveyor game built with TypeScript and Vite. Eight sushi varieties across five lanes, hungry guests, and an unhurried little kitchen—no accounts or external assets required.
 
-Tap or hold a lane to send its front sushi clockwise around eighteen fixed belt slots. Guests collect matching sushi as it passes and happily wait for their complete orders of 4–7 pieces. Serve as many guests as you like: there is no timer. Unclaimed sushi keeps rolling, and filling the eighteenth slot ends your run.
+Tap or hold a lane to send its front sushi clockwise around forty fixed belt slots. Guests collect matching sushi as it passes and happily wait for their complete orders of 4–7 pieces. Serve as many guests as you like: there is no timer. Unclaimed sushi keeps rolling, and filling the fortieth slot ends your run.
 
 - Serve salmon, tuna, maki, shrimp, tamago, avocado maki, cucumber maki, and ikura gunkan. Every lane mixes varieties, with a fresh seeded selection each run.
 - Play with touch, mouse, or keys **1–5**; hold a lane or key to send at a steady pace. If passing sushi blocks the loading gate, the belt briefly pauses and backs the queue up to make room for your choice. Quick taps keep their selected sushi in order until loaded. Press **P** or **Escape** to pause and resume.

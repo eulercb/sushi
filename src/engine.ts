@@ -2,7 +2,7 @@
 export const SUSHI_TYPES = ['salmon', 'tuna', 'maki', 'shrimp', 'tamago', 'avocado', 'cucumber', 'ikura'] as const;
 export type SushiType = typeof SUSHI_TYPES[number];
 export type Phase = 'ready' | 'playing' | 'paused' | 'lost';
-export const RULES = { capacity: 18, speed: 0.105, orderMin: 4, orderMax: 7, queueDepth: 5, laneCount: 5, replacementDelay: 1.6, loadingDuration: 0.2, repeatInterval: 0.53 } as const;
+export const RULES = { capacity: 40, speed: 0.105, orderMin: 4, orderMax: 7, queueDepth: 5, laneCount: 5, replacementDelay: 1.6, loadingDuration: 0.2, repeatInterval: 0.53 } as const;
 export const STATIONS = [0.125, 0.375, 0.625, 0.875] as const;
 export interface Customer { id: number; type: SushiType; quantity: number; remaining: number; }
 export interface Seat { customer: Customer | null; returnsIn: number; }
