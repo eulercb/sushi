@@ -52,6 +52,47 @@ test('tap advances the queue, preserves controls, and fixed belt slots never ove
   expect(errors).toEqual([]);
 });
 
+test('eight distinct sushi previews retain five usable lanes and launch their named food', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await start(page);
+  await expect(page.locator('.lane')).toHaveCount(5);
+  const catalog = ['salmon', 'tuna', 'maki', 'shrimp', 'tamago', 'avocado', 'cucumber', 'ikura'];
+  const previews = await page.locator('.lane .piece').evaluateAll(nodes => nodes.map(node => ({
+    type: node.getAttribute('data-type'),
+    artwork: node.querySelector('svg')?.innerHTML || '',
+    shapes: node.querySelectorAll('svg path, svg ellipse, svg rect, svg circle').length,
+  })));
+  expect([...new Set(previews.map(piece => piece.type))].sort()).toEqual([...catalog].sort());
+  const artworks = catalog.map(type => previews.find(piece => piece.type === type)!);
+  expect(new Set(artworks.map(piece => piece.artwork)).size).toBe(8);
+  for (const piece of artworks) {
+    expect(piece.artwork).not.toBe('');
+    expect(piece.shapes).toBeGreaterThan(2);
+  }
+  const names: Record<string, string> = { avocado: 'Avocado maki', cucumber: 'Cucumber maki', ikura: 'Ikura gunkan' };
+  for (const [type, name] of Object.entries(names)) {
+    await page.locator('#pause').tap();
+    await page.locator('#restart').tap();
+    const laneNumber = await page.locator(`.lane .piece[data-type="${type}"]`).first().evaluate(node => node.closest('.lane')!.getAttribute('data-lane'));
+    const lane = page.locator(`[data-lane="${laneNumber}"]`);
+    // Advance an actual visible queue until the selected food reaches its launch gate.
+    for (let step = 0; step < 8 && await lane.getAttribute('data-type') !== type; step++) {
+      await lane.tap();
+      await page.clock.runFor(550);
+    }
+    await expect(lane).toHaveAttribute('data-type', type);
+    expect(await lane.getAttribute('aria-label')).toContain(`send ${name}.`);
+    await lane.tap();
+    await expect(page.locator(`.plate[data-type="${type}"]`)).not.toHaveCount(0);
+    await page.clock.runFor(550);
+  }
+  await page.setViewportSize({ width: 320, height: 568 });
+  await expectNoOverflow(page);
+  for (const lane of await page.locator('.lane').all()) await expect(lane).toBeInViewport();
+  expect(errors).toEqual([]);
+});
+
 test('holding repeats through free gates; release and pointer cancellation stop launches', async ({ page }) => {
   await start(page);
   await expect(page.locator('.lane').first()).toHaveCSS('touch-action', 'none');
@@ -155,8 +196,8 @@ test('real completed orders appear in local rankings after reload', async ({ pag
       counts[type] = (counts[type] || 0) + 1;
       return counts;
     }, {}));
-    const labels = await page.locator('.lane').evaluateAll(nodes => nodes.map(node => node.getAttribute('aria-label') || ''));
-    const lane = labels.findIndex(label => Object.entries(needs).some(([type, quantity]) => quantity > (traveling[type] || 0) && label.toLowerCase().includes(`send ${type}.`)));
+    const fronts = await page.locator('.lane').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-type') || ''));
+    const lane = fronts.findIndex(front => Object.entries(needs).some(([type, quantity]) => quantity > (traveling[type] || 0) && front === type));
     // Wait for plates already traveling before clearing another queue front.
     const allNeededTraveling = Object.entries(needs).every(([type, quantity]) => quantity <= (traveling[type] || 0));
     if (lane >= 0 || !allNeededTraveling) await page.keyboard.press(String((lane >= 0 ? lane : step % 5) + 1));
@@ -176,8 +217,8 @@ test('a full eighteen-slot belt ends the run through ordinary lane input', async
   await start(page);
   for (let step = 0; step < 160 && !(await page.getByRole('dialog').isVisible()); step++) {
     const requests = await page.locator('.guest').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-type')));
-    const labels = await page.locator('.lane').evaluateAll(nodes => nodes.map(node => node.getAttribute('aria-label') || ''));
-    const lane = labels.findIndex(label => !requests.some(type => type && label.toLowerCase().includes(`send ${type}.`)));
+    const fronts = await page.locator('.lane').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-type') || ''));
+    const lane = fronts.findIndex(front => !requests.includes(front));
     await page.keyboard.press(String((lane < 0 ? 0 : lane) + 1));
     await page.clock.runFor(550);
   }

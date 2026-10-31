@@ -1,11 +1,18 @@
 /** Hand-drawn, self-contained artwork. All coordinates share a 120×100 canvas. */
-export type SushiKind = 'salmon' | 'tuna' | 'maki' | 'shrimp' | 'tamago';
+import type { SushiType } from './engine';
+export type SushiKind = SushiType;
 const stroke = '#663c32';
 const svg = (body: string, cls = '', view = '0 0 120 100') => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${view}" class="${cls}" aria-hidden="true" fill="none">${body}</svg>`;
 const rice = () => `<path d="M20 63C20 45 37 37 60 37s40 9 40 26v7c0 11-18 19-40 19S20 81 20 70Z" fill="#fff9e7" stroke="${stroke}" stroke-width="2.5"/><path d="M24 72c14 11 58 16 72-1" stroke="#e6d5ba" stroke-width="3" stroke-linecap="round"/>${[[29,62],[38,72],[48,63],[58,76],[69,65],[79,75],[90,63],[32,79],[52,83],[72,83],[86,80]].map(([x,y],i)=>`<path d="m${x} ${y} ${i%2?4:-3} 3" stroke="#dccbab" stroke-width="2.4" stroke-linecap="round"/>`).join('')}`;
 export function sushiSvg(type: SushiKind, className = ''): string {
  let body = `<ellipse cx="60" cy="87" rx="45" ry="7" fill="#693d2e" opacity=".12"/>`;
- if(type === 'maki') {
+ if(type === 'avocado' || type === 'cucumber') {
+ body += `<path d="M26 40h68v32c0 19-68 19-68 0Z" fill="#31554a" stroke="${stroke}" stroke-width="3"/><path d="M32 58v17m7-13v17m46-17v17m5-21v17" stroke="#64816a" stroke-width="3" stroke-linecap="round"/><ellipse cx="60" cy="40" rx="34" ry="25" fill="#fff9e7" stroke="${stroke}" stroke-width="3"/><ellipse cx="60" cy="40" rx="27" ry="19" fill="#eee6cb"/>`;
+ if(type === 'avocado') body += `<path d="M39 46q0-22 31-24l13 20q-17 21-44 4Z" fill="#428c49" stroke="#365a37" stroke-width="2.5"/><path d="M44 44q1-15 24-17l9 14q-14 15-33 3Z" fill="#a4d452"/><path d="M49 41q5-9 17-10l5 8q-9 9-22 2Z" fill="#d6e77c"/><path d="m44 48 8 5m17-1 6-4" stroke="#fff9e7" stroke-width="2.5" stroke-linecap="round"/>`;
+ else body += `<ellipse cx="60" cy="40" rx="22" ry="17" fill="#4d9c58" stroke="#365a37" stroke-width="2.5"/><ellipse cx="60" cy="40" rx="17" ry="13" fill="#d1eaa0"/><path d="M60 31v18m-11-13 22 9m-22 0 22-9" stroke="#a6cc7c" stroke-width="1.7"/>${[[57,35],[63,35],[53,40],[67,40],[57,45],[63,45]].map(([x,y])=>`<ellipse cx="${x}" cy="${y}" rx="2" ry="1.4" fill="#fff6c6"/>`).join('')}`;
+ } else if(type === 'ikura') {
+ body += `<path d="M22 40h76v32c0 20-76 20-76 0Z" fill="#284e42" stroke="${stroke}" stroke-width="3"/><path d="M28 57v17m8-12v17m49-17v17m7-23v19" stroke="#597862" stroke-width="3" stroke-linecap="round"/><ellipse cx="60" cy="40" rx="38" ry="25" fill="#fff9e7" stroke="${stroke}" stroke-width="3"/><ellipse cx="60" cy="40" rx="32" ry="19" fill="#d66a2c"/>${[[39,31],[55,27],[72,28],[83,37],[31,42],[47,41],[64,39],[75,48],[59,53],[41,52]].map(([x,y])=>`<circle cx="${x}" cy="${y}" r="8" fill="#ee852b" stroke="#aa4928" stroke-width="2"/><circle cx="${x-2}" cy="${y-2}" r="2.5" fill="#ffce73"/>`).join('')}<path d="M23 48q37 29 74 0v13q-37 27-74 0Z" fill="#31554a" stroke="${stroke}" stroke-width="2"/>`;
+ } else if(type === 'maki') {
  body += `<path d="M27 40h66v33c0 14-66 15-66 0Z" fill="#31554a" stroke="${stroke}" stroke-width="2.5"/><path d="M31 55v19m8-14v20m45-18v17m5-23v17" stroke="#64816a" stroke-width="2.5" stroke-linecap="round"/><ellipse cx="60" cy="40" rx="33" ry="24" fill="#fff9e7" stroke="${stroke}" stroke-width="3"/><ellipse cx="60" cy="40" rx="23" ry="16" fill="#f5e9ce"/>${[[36,36],[41,27],[50,24],[72,26],[82,34],[80,46],[71,55],[46,54],[36,45]].map(([x,y])=>`<path d="m${x} ${y} 3 2" stroke="#d9c9a7" stroke-width="2" stroke-linecap="round"/>`).join('')}<path d="M47 32q12-8 24 0l4 14q-13 9-29 0Z" fill="#ed7869" stroke="${stroke}" stroke-width="2"/><path d="m49 34 10-4 2 19-13-3Z" fill="#8eac68" stroke="#536645" stroke-width="1.5"/><path d="m52 35 5-2 1 11-5-1Z" fill="#d4df95"/><path d="m64 33 7 3 1 7-8 3Z" fill="#ffa987"/>`;
  } else {
  body += rice();

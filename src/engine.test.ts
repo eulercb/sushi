@@ -1,8 +1,42 @@
 import { describe, it, expect } from 'vitest';
-import { createGame, startGame, launchPlate, tick, pauseGame, resumeGame, restartGame, canLaunch, RULES } from './engine';
+import { createGame, startGame, launchPlate, tick, pauseGame, resumeGame, restartGame, canLaunch, RULES, SUSHI_TYPES } from './engine';
 const playing = () => startGame(createGame(71));
 const noMatch = () => { const s = playing(); s.seats.forEach(seat => { seat.customer!.type = 'tuna'; }); s.queues.forEach(queue => queue.fill('salmon')); return s; };
 describe('cozy sushi service', () => {
+  it('mixes all eight varieties into exactly five preview lanes with varied seeded fronts', () => {
+    expect(SUSHI_TYPES).toHaveLength(8);
+    const fronts = new Set<string>();
+    const requests = new Set<string>();
+    for (let seed = 0; seed < 100; seed++) {
+      const s = createGame(seed);
+      expect(s.queues).toHaveLength(RULES.laneCount);
+      expect(RULES.laneCount).toBe(5);
+      expect(s.queues.every(queue => queue.length === RULES.queueDepth)).toBe(true);
+      expect(new Set(s.queues.flat())).toEqual(new Set(SUSHI_TYPES));
+      expect(new Set(s.queues.map(queue => queue[0])).size).toBe(5);
+      s.queues.forEach(queue => fronts.add(queue[0]));
+      s.seats.forEach(seat => requests.add(seat.customer!.type));
+    }
+    expect(fronts).toEqual(new Set(SUSHI_TYPES));
+    expect(requests).toEqual(new Set(SUSHI_TYPES));
+  });
+  it.each(['avocado', 'cucumber', 'ikura'] as const)('launches and serves %s without mutating the input', type => {
+    const initial = noMatch();
+    initial.queues[0][0] = type;
+    initial.seats[0].customer!.type = type;
+    initial.seats[0].customer!.remaining = 1;
+    const snapshot = structuredClone(initial);
+    const launched = launchPlate(initial, 0);
+    expect(launched.plates[0].type).toBe(type);
+    expect(launched.queues[0]).toHaveLength(RULES.queueDepth);
+    expect(SUSHI_TYPES).toContain(launched.queues[0].at(-1));
+    const served = tick(launched, 1.7);
+    expect(served.plates).toHaveLength(0);
+    expect(served.served).toBe(1);
+    expect(served.delivered).toBe(1);
+    expect(served.seats[0].customer).toBeNull();
+    expect(initial).toEqual(snapshot);
+  });
   it('replays seeded state and leaves inputs untouched', () => { const a = playing(); const snapshot = structuredClone(a); expect(tick(launchPlate(a, 2), 3)).toEqual(tick(launchPlate(playing(), 2), 3)); expect(a).toEqual(snapshot); });
   it('lets customers wait indefinitely and never removes unmatched plates', () => { const initial = noMatch(); const s = tick(launchPlate(initial, 0), 180); expect(s.phase).toBe('playing'); expect(s.seats).toEqual(initial.seats); expect(s.plates).toHaveLength(1); expect(s.plates[0].distance).toBeGreaterThan(10); expect(s.served).toBe(0); });
   it('moves plates a quarter lap at the faster belt speed', () => { const s = tick(launchPlate(noMatch(), 0), .25 / .105); expect(RULES.speed).toBe(.105); expect(s.plates[0].distance).toBeCloseTo(.25); expect(s.plates[0].position).toBeCloseTo(.25); });

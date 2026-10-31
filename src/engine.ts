@@ -1,8 +1,8 @@
 /** Pure, seeded simulation. Positions are clockwise laps on fixed belt slots. */
-export const SUSHI_TYPES = ['salmon', 'tuna', 'maki', 'shrimp', 'tamago'] as const;
+export const SUSHI_TYPES = ['salmon', 'tuna', 'maki', 'shrimp', 'tamago', 'avocado', 'cucumber', 'ikura'] as const;
 export type SushiType = typeof SUSHI_TYPES[number];
 export type Phase = 'ready' | 'playing' | 'paused' | 'lost';
-export const RULES = { capacity: 18, speed: 0.105, orderMin: 4, orderMax: 7, queueDepth: 5, replacementDelay: 1.6 } as const;
+export const RULES = { capacity: 18, speed: 0.105, orderMin: 4, orderMax: 7, queueDepth: 5, laneCount: 5, replacementDelay: 1.6 } as const;
 export const STATIONS = [0.125, 0.375, 0.625, 0.875] as const;
 export interface Customer { id: number; type: SushiType; quantity: number; remaining: number; }
 export interface Seat { customer: Customer | null; returnsIn: number; }
@@ -21,7 +21,18 @@ function customer(s: GameState): Customer {
 function event(s: GameState, detail: Omit<GameEvent, 'id'>) { s.events.push({ id: s.nextId++, ...detail }); s.events = s.events.slice(-30); }
 export function createGame(seed = 42): GameState {
   const s: GameState = { phase: 'ready', seed: seed >>> 0, rng: seed >>> 0, nextId: 1, elapsed: 0, served: 0, delivered: 0, beltPhase: 0, queues: [], seats: [], plates: [], events: [] };
-  s.queues = SUSHI_TYPES.map(type => [type, ...Array.from({ length: RULES.queueDepth - 1 }, () => sushi(s))]);
+  // A seeded bag gives every variety a place in the previews, with five distinct fronts.
+  const bag: SushiType[] = [];
+  while (bag.length < RULES.laneCount * RULES.queueDepth) {
+    const batch = [...SUSHI_TYPES];
+    for (let i = batch.length - 1; i > 0; i--) {
+      const j = Math.floor(random(s) * (i + 1));
+      [batch[i], batch[j]] = [batch[j], batch[i]];
+    }
+    bag.push(...batch);
+  }
+  s.queues = Array.from({ length: RULES.laneCount }, (_, lane) =>
+    Array.from({ length: RULES.queueDepth }, (_, depth) => bag[depth * RULES.laneCount + lane]));
   s.seats = STATIONS.map(() => ({ customer: customer(s), returnsIn: 0 }));
   return s;
 }
