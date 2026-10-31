@@ -14,7 +14,7 @@ Tap or hold a lane to send its front sushi clockwise around forty fixed belt slo
 
 Open the deployed game online once so it can download its offline files, then reload. Subsequent visits work offline after the service worker is active. Supporting browsers show an **Install** button when installation is available. On iPhone or iPad, use Safari → Share → Add to Home Screen. Ordinary browser play is always available.
 
-New versions download in the background without interrupting a run. To use an update, reconnect online, close all Sushi Loop tabs and app windows, then reopen. Saved rankings and personal bests remain on your device unless you clear site data.
+New versions download in the background without interrupting a run. Choose **Update & restart** when it appears to start a fresh run with the update. Saved rankings and personal bests remain on your device unless you clear site data.
 
 ## Development
 
@@ -43,7 +43,7 @@ See [performance notes](docs/performance.md) for the phone-rendering improvement
 
 `src/engine.ts` contains the deterministic simulation and seeded random state. Its immutable state transitions are independent of the browser and covered by unit tests. `src/main.ts` owns rendering, animation, accessibility, sound, and optional local storage. `src/art.ts` provides the original inline SVG illustrations; `src/style.css` handles responsive presentation.
 
-`src/pwa.ts` registers the production service worker and connects browser installation events. `public/sw.js` caches a complete release; the Vite build plugin injects the generated asset list and a content hash so HTML and assets stay in sync. Updates activate after existing app windows close. No external fonts or runtime services are required.
+`src/pwa.ts` registers the production service worker and connects browser installation events. `public/sw.js` caches a complete release; the Vite build plugin injects the generated asset list and a content hash so HTML and assets stay in sync. Updates activate after the complete download without reloading an open game. No external fonts or runtime services are required.
 
 ## Deployment
 
@@ -55,4 +55,4 @@ Original SVG characters breathe, blink, savor each bite, and cheer when an order
 
 `src/animations.ts` uses Motion Mini's native Web Animations for transforms and opacity. Scene loops and transient effects cancel on pause, restart, tab hiding, and live reduced-motion preference changes. Effects have a shared 24-node limit and last at most one second; belt movement keeps its existing renderer. Reduced motion retains the illustrated smiles and clear order feedback without moving celebrations.
 
-When an update is ready, choose **Update & restart** to apply it and start a fresh run. Older installed versions without this button may need all game tabs and app windows closed before reopening to receive an update.
+When an update is ready, choose **Update & restart** to apply it and start a fresh run. Older installed versions without this button may need another reload after the update downloads.

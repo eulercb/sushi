@@ -405,6 +405,32 @@ test('real completed orders appear in local rankings after reload', async ({ pag
   await expect(page.locator('.ranking-list li').first()).toContainText(`${served} ${served === 1 ? 'guest' : 'guests'}`);
 });
 
+test('a full belt with a matching plate keeps rolling until a guest eats', async ({ page }) => {
+  test.setTimeout(60000);
+  await start(page);
+  await page.clock.pauseAt(await page.evaluate(() => Date.now()));
+  const requests = await page.locator('.guest').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-type')));
+  // Queue forty ordinary taps while the virtual clock is stopped. Choose a
+  // matching front at least once; all reservations then load in order.
+  let matched = false;
+  for (let i = 0; i < 40; i++) {
+    const fronts = await page.locator('.lane').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-type')));
+    const match = fronts.findIndex(type => requests.includes(type));
+    const lane = !matched && match >= 0 ? match : i % 5;
+    matched ||= requests.includes(fronts[lane]);
+    await page.locator(`[data-lane="${lane}"]`).tap();
+  }
+  expect(matched).toBe(true);
+  await page.clock.runFor(8100);
+  await expect(page.locator('#capacity')).toHaveText('40 / 40');
+  await expect(page.getByRole('dialog')).toBeHidden();
+  const plates = await page.locator('.plate').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-type')));
+  expect(plates.some(type => requests.includes(type))).toBe(true);
+  await page.clock.runFor(10000);
+  await expect(page.getByRole('dialog')).toBeHidden();
+  expect(await page.locator('.plate').count()).toBeLessThan(40);
+});
+
 test('a full belt with no matching plates ends the run through ordinary lane input', async ({ page }) => {
   test.setTimeout(150000);
   await start(page);
@@ -490,7 +516,7 @@ test('installed service worker caches the app and playable offline reload', asyn
   await expect(page.locator('.plate')).toHaveCount(1);
 });
 
-test('a waiting update applies only when the player chooses to restart', async ({ page, baseURL }) => {
+test('an activated update restarts the game only when the player chooses', async ({ page, baseURL }) => {
   let revision = 1;
   const server = createServer(async (request, response) => {
     try {
@@ -521,6 +547,57 @@ test('a waiting update applies only when the player chooses to restart', async (
     await page.locator('#update').tap();
     await expect(page.getByRole('dialog')).toBeVisible();
     await expect(page.locator('.plate')).toHaveCount(0);
+  } finally {
+    server.close();
+  }
+});
+
+test('a legacy cached app gets the updated release on reload without losing saved data', async ({ page, baseURL }) => {
+  let legacy = true;
+  const oldWorker = `
+    const cacheName = 'sushi-loop:/sushi/:legacy';
+    self.addEventListener('install', event => event.waitUntil(caches.open(cacheName).then(cache => cache.addAll(['./index.html']))));
+    self.addEventListener('activate', event => event.waitUntil(self.clients.claim()));
+    self.addEventListener('fetch', event => {
+      if (event.request.mode === 'navigate') event.respondWith(caches.open(cacheName).then(cache => cache.match('./index.html')));
+    });`;
+  const oldPage = '<!doctype html><title>Legacy game</title><h1>A full belt, a lovely run.</h1><script>navigator.serviceWorker.register("./sw.js")</script>';
+  const server = createServer(async (request, response) => {
+    try {
+      const pathname = request.url!.split('?')[0];
+      if (legacy && pathname.endsWith('/sw.js')) {
+        response.setHeader('content-type', 'application/javascript'); response.end(oldWorker); return;
+      }
+      if (legacy && (pathname.endsWith('/') || pathname.endsWith('/index.html'))) {
+        response.setHeader('content-type', 'text/html'); response.end(oldPage); return;
+      }
+      const upstream = await fetch(new URL(request.url!, 'http://127.0.0.1:4173'));
+      response.statusCode = upstream.status;
+      const contentType = upstream.headers.get('content-type');
+      if (contentType) response.setHeader('content-type', contentType);
+      response.end(Buffer.from(await upstream.arrayBuffer()));
+    } catch { response.statusCode = 502; response.end(); }
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  try {
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Missing test server address');
+    await page.goto(`http://127.0.0.1:${address.port}${new URL(baseURL!).pathname}`);
+    await page.evaluate(async () => { await navigator.serviceWorker.ready; localStorage.setItem('sushi-loop-guests-best', '12'); });
+    await expect.poll(() => page.evaluate(() => !!navigator.serviceWorker.controller)).toBe(true);
+    legacy = false;
+    await page.evaluate(async () => {
+      const changed = new Promise<void>(resolve => navigator.serviceWorker.addEventListener('controllerchange', () => resolve(), { once: true }));
+      await (await navigator.serviceWorker.ready).update();
+      await changed;
+    });
+    // The old page has no update listener: takeover must never reload it.
+    await expect(page.locator('h1')).toHaveText('A full belt, a lovely run.');
+    await expect.poll(() => page.evaluate(async () => (await navigator.serviceWorker.ready).active?.state)).toBe('activated');
+    await page.reload();
+    await expect(page.getByRole('dialog')).toContainText('Good things');
+    await expect(page.locator('#best')).toHaveText('12');
   } finally {
     server.close();
   }

@@ -12,17 +12,20 @@ self.addEventListener('install', event => {
   // Cache.addAll rejects errors so incomplete releases never activate.
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(
     URLS.map(url => new Request(url, { cache: 'reload' })),
-  )));
-  // Intentionally wait for existing tabs to close before replacing their worker.
+  )).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', event => {
-  event.waitUntil(Promise.all([
-    caches.keys().then(keys => Promise.all(
-      keys.filter(key => key.startsWith(PREFIX) && key !== CACHE).map(key => caches.delete(key)),
-    )),
-    self.clients.claim(),
-  ]));
+  event.waitUntil(
+    caches.keys().then(async keys => {
+      const previous = keys.filter(key => key.startsWith(PREFIX) && key !== CACHE);
+      let keep;
+      for (const key of previous.slice().reverse()) {
+        if (await (await caches.open(key)).match(INDEX)) { keep = key; break; }
+      }
+      return Promise.all(previous.filter(key => key !== keep).map(key => caches.delete(key)));
+    }).then(() => self.clients.claim()),
+  );
 });
 
 self.addEventListener('message', event => {
@@ -43,6 +46,12 @@ self.addEventListener('fetch', event => {
       // Known build assets are identical for every Origin header. Vite preview
       // sends Vary: Origin; module requests differ from precache requests.
       (await cache.match(request, { ignoreVary: true })) || fetch(request)));
+  } else if (url.pathname.startsWith(new URL('assets/', SCOPE).pathname)) {
+    // An older open tab may still request its own hashed assets after takeover.
+    event.respondWith(caches.keys().then(async keys => {
+      const previous = keys.filter(key => key.startsWith(PREFIX) && key !== CACHE).at(-1);
+      return (previous && await (await caches.open(previous)).match(request, { ignoreVary: true })) || fetch(request);
+    }));
   }
   // Unknown files, API calls and external requests retain normal network behavior.
 });

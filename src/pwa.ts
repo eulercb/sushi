@@ -28,6 +28,15 @@ export function initPwa(): void {
   });
   if (import.meta.env.PROD && 'serviceWorker' in navigator) {
     const update = document.querySelector<HTMLButtonElement>('#update');
+    let controlled = !!navigator.serviceWorker.controller;
+    let newController = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (controlled) {
+        newController = true;
+        if (update) update.hidden = false;
+      }
+      controlled = true;
+    });
     const register = () => {
       void navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`, {
         scope: import.meta.env.BASE_URL,
@@ -39,6 +48,7 @@ export function initPwa(): void {
           registration.installing?.addEventListener('statechange', showUpdate);
         });
         update?.addEventListener('click', () => {
+          if (newController) { location.reload(); return; }
           const waiting = registration.waiting;
           if (!waiting) { update.hidden = true; return; }
           update.disabled = true;
