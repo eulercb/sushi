@@ -52,6 +52,74 @@ test('tap advances the queue, preserves controls, and fixed belt slots never ove
   expect(errors).toEqual([]);
 });
 
+test('rapid taps reserve exact foods, pause the belt, and load FIFO into separate slots', async ({ page }) => {
+  await start(page);
+  await page.clock.pauseAt(new Date('2026-01-01T12:00:01Z'));
+  const lanes = page.locator('.lane');
+  const choices = await lanes.evaluateAll(nodes => nodes.slice(0, 3).map(node => ({
+    food: node.getAttribute('data-type'),
+    next: node.querySelectorAll('.piece')[1].getAttribute('data-type'),
+  })));
+  expect(new Set(choices.map(choice => choice.food)).size).toBe(3);
+  await lanes.nth(0).tap();
+  await expect(page.locator('.plate')).toHaveCount(1);
+  const originalSlot = Number(await page.locator('.plate').getAttribute('data-slot'));
+  await lanes.nth(1).tap();
+  await expect(lanes.nth(0)).toHaveAttribute('data-type', choices[0].next!);
+  await expect(lanes.nth(1)).toHaveAttribute('data-type', choices[1].next!);
+  await expect(page.locator('.launch-gate')).toHaveClass(/loading/);
+  await expect(page.locator('#status')).toContainText('Making room');
+  const frozenSlots = await page.locator('.slot').evaluateAll(nodes => nodes.map(node => node.getAttribute('style')));
+  await page.clock.runFor(100);
+  expect(await page.locator('.slot').evaluateAll(nodes => nodes.map(node => node.getAttribute('style')))).toEqual(frozenSlots);
+  await expect(page.locator('.plate')).toHaveCount(1);
+
+  // A third deliberate tap must retain its chosen food while the second is loading.
+  await lanes.nth(2).tap();
+  await expect(lanes.nth(2)).toHaveAttribute('data-type', choices[2].next!);
+  const reservedQueues = await queues(page);
+  await page.clock.runFor(150);
+  await expect(page.locator('.plate')).toHaveCount(2);
+  expect(await page.locator('.plate').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-type')))).toEqual(choices.slice(0, 2).map(choice => choice.food));
+  await expect(page.locator('.launch-gate')).toHaveClass(/loading/);
+  await page.clock.runFor(200);
+  await expect(page.locator('.plate')).toHaveCount(3);
+  await expect(page.locator('.launch-gate')).not.toHaveClass(/loading/);
+  const plates = await page.locator('.plate').evaluateAll(nodes => nodes.map(node => ({
+    food: node.getAttribute('data-type'), slot: Number(node.getAttribute('data-slot')),
+  })));
+  expect(plates.map(plate => plate.food)).toEqual(choices.map(choice => choice.food));
+  expect(plates.map(plate => plate.slot)).toEqual([(originalSlot + 16) % 18, (originalSlot + 17) % 18, originalSlot]);
+  expect(new Set(plates.map(plate => plate.slot)).size).toBe(3);
+  expect(await queues(page)).toEqual(reservedQueues);
+});
+
+test('holding reserves at most one choice per repeat interval and release finishes accepted loading', async ({ page }) => {
+  await start(page);
+  await page.clock.pauseAt(new Date('2026-01-01T12:00:01Z'));
+  await page.locator('.lane').nth(0).tap();
+  await hold(page, 1);
+  const reserved = await queues(page);
+  await expect(page.locator('.launch-gate')).toHaveClass(/loading/);
+  await page.clock.runFor(100);
+  expect(await queues(page)).toEqual(reserved);
+  await page.mouse.up();
+  await page.clock.runFor(200);
+  await expect(page.locator('.plate')).toHaveCount(2);
+  await page.clock.runFor(600);
+  expect(await queues(page)).toEqual(reserved);
+  await hold(page, 2);
+  const firstHeld = await queues(page);
+  await page.clock.runFor(500);
+  expect(await queues(page)).toEqual(firstHeld);
+  await page.clock.runFor(100);
+  expect(await queues(page)).not.toEqual(firstHeld);
+  await page.mouse.up();
+  const released = await queues(page);
+  await page.clock.runFor(1000);
+  expect(await queues(page)).toEqual(released);
+});
+
 test('eight distinct sushi previews retain five usable lanes and launch their named food', async ({ page }) => {
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
@@ -201,7 +269,8 @@ test('real completed orders appear in local rankings after reload', async ({ pag
     // Wait for plates already traveling before clearing another queue front.
     const allNeededTraveling = Object.entries(needs).every(([type, quantity]) => quantity <= (traveling[type] || 0));
     if (lane >= 0 || !allNeededTraveling) await page.keyboard.press(String((lane >= 0 ? lane : step % 5) + 1));
-    await page.clock.runFor(550);
+    // Let accepted plates reach customers before reserving more belt space.
+    await page.clock.runFor(1500);
   }
   const served = Number(await page.locator('#served').textContent());
   expect(served).toBeGreaterThan(0);

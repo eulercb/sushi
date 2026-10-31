@@ -1,7 +1,7 @@
 import './style.css';
 import { initPwa } from './pwa';
 import { readRanking, recordResult } from './ranking';
-import { createGame, startGame, restartGame, pauseGame, resumeGame, launchPlate, tick, canLaunch, RULES, type SushiType } from './engine';
+import { createGame, startGame, restartGame, pauseGame, resumeGame, launchPlate, tick, canLaunch, canRepeatLaunch, RULES, type SushiType } from './engine';
 import { sushiSvg, avatarSvg, chefSvg, blossomSvg } from './art';
 const app = document.querySelector<HTMLDivElement>('#app')!;
 const read = (key:string, fallback:string) => { try { return localStorage.getItem(key) || fallback; } catch { return fallback; } };
@@ -10,6 +10,7 @@ let best = Number(read('sushi-loop-guests-best','0')) || 0;
 best=Math.max(best,...readRanking().map(entry=>entry.served));
 let ranking = false;
 let held: { lane:number; pointer?:number; key?:string } | null = null;
+let nextRepeat = 0;
 let sound = read('sushi-loop-sound','off') === 'on';
 let state = createGame(Date.now());
 let help = false;
@@ -35,7 +36,7 @@ function openHelp() { clearHold(); help=true; if(state.phase==='playing') state=
 el('help').onclick=openHelp;
 function openRanking() { clearHold(); ranking=true; if(state.phase==='playing') state=pauseGame(state); lastPhase=''; render(); }
 el('ranking').onclick=openRanking;
-function launch(index:number) { if(!canLaunch(state)) return; state=launchPlate(state,index); tone(360+index*70); lanes[index].classList.remove('launching'); void lanes[index].offsetWidth; lanes[index].classList.add('launching'); render(); }
+function launch(index:number) { if(!canLaunch(state)) return; state=launchPlate(state,index); nextRepeat=performance.now()+RULES.repeatInterval*1000; tone(360+index*70); lanes[index].classList.remove('launching'); void lanes[index].offsetWidth; lanes[index].classList.add('launching'); render(); }
 lanes.forEach((button,i)=> {
  button.onpointerdown=event=> { if(event.button!==0 || state.phase!=='playing' || held) return; event.preventDefault(); button.focus({preventScroll:true}); button.setPointerCapture(event.pointerId); held={lane:i,pointer:event.pointerId}; button.classList.add('held'); launch(i); };
  button.onpointermove=event=> { if(held?.pointer!==event.pointerId) return; const rect=button.getBoundingClientRect(); if(event.clientX<rect.left || event.clientX>rect.right || event.clientY<rect.top || event.clientY>rect.bottom) clearHold(); };
@@ -66,14 +67,15 @@ function showOverlay() {
  requestAnimationFrame(()=>el('primary').focus({preventScroll:true}));
 }
 function render() {
- el('served').textContent=String(state.served); el('capacity').textContent=`${state.plates.length} / ${RULES.capacity}`; el('progress').style.width=`${state.plates.length/RULES.capacity*100}%`; el('progress').classList.toggle('nearly-full',state.plates.length/RULES.capacity>=.83); el('status').textContent=state.phase==='playing'?'Tap or hold a lane · guests can wait':state.phase==='lost'?'A lovely run, beautifully served':'Your kitchen is ready';
+ el('served').textContent=String(state.served); el('capacity').textContent=`${state.plates.length} / ${RULES.capacity}`; el('progress').style.width=`${state.plates.length/RULES.capacity*100}%`; el('progress').classList.toggle('nearly-full',state.plates.length/RULES.capacity>=.83); el('status').textContent=state.phase==='playing'?(state.pending.length?'Making room for your sushi…':'Tap or hold a lane · guests can wait'):state.phase==='lost'?'A lovely run, beautifully served':'Your kitchen is ready';
+ document.querySelector('.launch-gate')!.classList.toggle('loading',state.pending.length>0);
  el('pause').toggleAttribute('disabled',state.phase==='ready'||state.phase==='lost');
  if(state.phase!=='playing') clearHold();
  document.querySelectorAll<HTMLElement>('.slot').forEach((node,i)=>{ const angle=(state.beltPhase+i/RULES.capacity)*Math.PI*2; node.style.left=`${50-Math.sin(angle)*35}%`;node.style.top=`${50+Math.cos(angle)*35}%`;node.classList.toggle('occupied',state.plates.some(p=>p.slot===i)); });
  lanes.forEach((button,i)=> { button.disabled=state.phase!=='playing'; const key=state.queues[i].join(); if(queueKeys[i]!==key) { queueKeys[i]=key; button.dataset.type=state.queues[i][0]; button.querySelector('.lane-pieces')!.innerHTML=state.queues[i].map((type,j)=>`<span class="piece piece-${j}" data-type="${type}">${sushiSvg(type)}</span>`).join(''); button.setAttribute('aria-label',`Lane ${i+1}: send ${names[state.queues[i][0]]}. Next ${names[state.queues[i][1]]}`); } });
  state.seats.forEach((seat,i)=> { const guest=el(`guest-${i}`); const customer=seat.customer; const key=customer?`${customer.id}-${customer.type}-${customer.remaining}`:'empty'; if(guestKeys[i]!==key) { const changed=guestKeys[i]?.split('-')[0]!==key.split('-')[0]; guestKeys[i]=key; guest.querySelector('.order-content')!.innerHTML=customer?`${sushiSvg(customer.type)}<strong>×${customer.remaining}</strong>`:'<span class="thanks">See you soon! ♡</span>'; guest.dataset.type=customer?.type ?? ''; guest.dataset.remaining=String(customer?.remaining ?? 0); guest.setAttribute('aria-label',customer?`Guest ${i+1} wants ${customer.remaining} ${names[customer.type]}`:`Guest ${i+1} seat is waiting`); guest.classList.toggle('empty',!customer); if(changed&&customer) { guest.querySelector('.avatar')!.innerHTML=avatarSvg(customer.id%6); guest.classList.remove('arriving'); void guest.offsetWidth; guest.classList.add('arriving'); } } });
  const active=new Set(state.plates.map(p=>p.id)); plates.forEach((node,id)=> {if(!active.has(id)){node.remove(); plates.delete(id);}});
- state.plates.forEach(plate=> {let node=plates.get(plate.id); if(!node) {node=document.createElement('div'); node.className=`plate ${plate.type}`; node.dataset.type=plate.type; node.dataset.slot=String(plate.slot); node.innerHTML=sushiSvg(plate.type); el('plates').append(node); plates.set(plate.id,node);} const angle=plate.position*Math.PI*2; node.style.left=`${50-Math.sin(angle)*35}%`; node.style.top=`${50+Math.cos(angle)*35}%`; });
+ state.plates.forEach(plate=> {let node=plates.get(plate.id); if(!node) {node=document.createElement('div'); node.className=`plate ${plate.type}`; node.dataset.type=plate.type; node.dataset.slot=String(plate.slot); node.innerHTML=sushiSvg(plate.type); el('plates').append(node); plates.set(plate.id,node);} node.dataset.slot=String(plate.slot); const angle=plate.position*Math.PI*2; node.style.left=`${50-Math.sin(angle)*35}%`; node.style.top=`${50+Math.cos(angle)*35}%`; });
  state.events.filter(event=>event.id>lastEvent).forEach(event=> { lastEvent=event.id; if(event.kind==='serve'||event.kind==='complete') { const effect=document.createElement('span'); effect.className=`float-point float-${event.station}`; effect.textContent=event.kind==='complete'?'Thank you! ♡':'Delicious ♡'; el('effects').append(effect); setTimeout(()=>effect.remove(),1300); if(event.kind==='complete') {tone(800); el('announcement').textContent=`Happy guest! ${state.served} guests served.`;} } });
  if(state.served>best){ best=state.served; save('sushi-loop-guests-best',String(best)); el('best').textContent=String(best); }
  recordRun();
@@ -87,5 +89,5 @@ newRun();
 initPwa();
 render();
 let previous=performance.now();
-function frame(now:number) { const delta=Math.min(.1,(now-previous)/1000); previous=now; if(state.phase==='playing'){state=tick(state,delta);if(held && canLaunch(state)) launch(held.lane);render();} requestAnimationFrame(frame); }
+function frame(now:number) { const delta=Math.min(.1,(now-previous)/1000); previous=now; if(state.phase==='playing'){state=tick(state,delta);if(held && now>=nextRepeat && canRepeatLaunch(state)) launch(held.lane);render();} requestAnimationFrame(frame); }
 requestAnimationFrame(frame);

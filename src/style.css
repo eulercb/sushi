@@ -37,3 +37,5 @@ footer:has(#install:not([hidden])) .footer-note{display:none}footer button{min-w
  .header{margin-bottom:10px}.hud{padding:8px 12px}.service-line{margin:10px 1px}.lane{height:178px}
  .piece-1{top:27px}.piece-2{top:54px}.piece-3{top:81px}.piece-4{top:108px}
 }
+
+.launch-gate.loading { background: #f8c66b; box-shadow: 0 0 0 7px #f8c66b33; }
