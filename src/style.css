@@ -48,3 +48,6 @@ footer:has(#install:not([hidden])) .footer-note{display:none}footer button{min-w
 .empty .avatar{opacity:0}.guest.empty.celebrating .avatar{opacity:1}
 
 .character-breath{width:100%;transform-origin:50% 85%}.chef{transform-origin:50% 85%}
+
+footer:has(#update:not([hidden])) { flex-wrap: wrap; gap: 0 12px; }
+footer:has(#update:not([hidden])) .footer-note { display: none; }

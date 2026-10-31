@@ -109,11 +109,26 @@ describe('cozy sushi service', () => {
   it('lets customers wait indefinitely and never removes unmatched plates', () => { const initial = noMatch(); const s = tick(launchPlate(initial, 0), 180); expect(s.phase).toBe('playing'); expect(s.seats).toEqual(initial.seats); expect(s.plates).toHaveLength(1); expect(s.plates[0].distance).toBeGreaterThan(10); expect(s.served).toBe(0); });
   it('moves plates a quarter lap at the faster belt speed', () => { const s = tick(launchPlate(noMatch(), 0), .25 / .105); expect(RULES.speed).toBe(.105); expect(s.plates[0].distance).toBeCloseTo(.25); expect(s.plates[0].position).toBeCloseTo(.25); });
   it('generates orders of four to seven pieces across seeded games', () => { const quantities = Array.from({ length: 100 }, (_, seed) => createGame(seed).seats.map(seat => seat.customer!.quantity)).flat(); expect(Math.min(...quantities)).toBe(4); expect(Math.max(...quantities)).toBe(7); expect(quantities.every(quantity => quantity >= RULES.orderMin && quantity <= RULES.orderMax)).toBe(true); });
-  it('gives every active customer a distinct order across seeded games and simultaneous replacements', () => {
+  it('uses the seeded progressive repeat probability and prefers types in the queue', () => {
+    // These RNG states give first draws of about .236 and .623, respectively.
+    for (const [served, rng, repeats] of [[0, 0, false], [25, 0, true], [25, 1000, false], [50, 1000, true], [100, 1000, true]] as const) {
+      const state = playing();
+      state.served = served;
+      state.rng = rng;
+      state.seats[0] = { customer: null, returnsIn: 0 };
+      state.seats.slice(1).forEach(seat => { seat.customer!.type = 'tuna'; });
+      state.queues.forEach(queue => queue.splice(0, queue.length, 'tuna', 'salmon', 'salmon', 'salmon', 'salmon'));
+      const returned = tick(state, .05);
+      expect(returned.seats[0].customer!.type).toBe(repeats ? 'tuna' : 'salmon');
+      expect(tick(state, .05)).toEqual(returned);
+    }
+  });
+  it('allows initial repeated orders and replaces simultaneous departures deterministically', () => {
+    let sawRepeat = false;
     for (let seed = 0; seed < 100; seed++) {
       const initial = startGame(createGame(seed));
       const types = initial.seats.map(seat => seat.customer!.type);
-      expect(new Set(types).size).toBe(initial.seats.length);
+      sawRepeat ||= new Set(types).size < types.length;
       initial.seats.slice(0, 2).forEach(seat => { seat.customer!.remaining = 1; });
       initial.plates = [0, 1].map((station, slot) => ({
         id: 1000 + slot, type: types[station], slot,
@@ -123,21 +138,22 @@ describe('cozy sushi service', () => {
       expect(departed.served).toBe(2);
       expect(departed.seats.slice(0, 2).every(seat => seat.customer === null)).toBe(true);
       const returned = tick(departed, RULES.replacementDelay + .05);
-      const orders = returned.seats.map(seat => seat.customer!.type);
-      expect(new Set(orders).size).toBe(returned.seats.length);
       expect(returned.seats.every(seat => seat.customer!.quantity >= RULES.orderMin && seat.customer!.quantity <= RULES.orderMax)).toBe(true);
       expect(tick(departed, RULES.replacementDelay + .05)).toEqual(returned);
     }
+    expect(sawRepeat).toBe(true);
   });
-  it('chooses an unoccupied type even when every preview type is already requested', () => {
-    const state = playing();
-    const occupied = state.seats[1].customer!.type;
-    state.queues.forEach(queue => queue.fill(occupied));
-    state.seats[0] = { customer: null, returnsIn: 0 };
-    const returned = tick(state, .05);
-    const orders = returned.seats.map(seat => seat.customer!.type);
-    expect(new Set(orders).size).toBe(returned.seats.length);
-    expect(SUSHI_TYPES).toContain(orders[0]);
+  it('falls back within the chosen category when previews lack it', () => {
+    for (const [served, rng, previews, expected] of [[0, 0, 'tuna', false], [50, 1000, 'salmon', true]] as const) {
+      const state = playing();
+      state.rng = rng;
+      state.served = served;
+      state.seats[0] = { customer: null, returnsIn: 0 };
+      state.seats.slice(1).forEach(seat => { seat.customer!.type = 'tuna'; });
+      state.queues.forEach(queue => queue.fill(previews));
+      const returned = tick(state, .05);
+      expect(returned.seats[0].customer!.type === 'tuna').toBe(expected);
+    }
   });
   it('accepts an occupied gate tap, pauses travel, and inserts after making room', () => {
     const first = launchPlate(noMatch(), 0);
@@ -233,6 +249,25 @@ describe('cozy sushi service', () => {
     expect(s.delivered).toBeGreaterThan(0);
     expect(s.plates.length).toBeLessThan(C);
     expect(canLaunch(s)).toBe(true);
+  });
+  it('keeps a full belt alive when only its last inserted plate matches any current guest', () => {
+    for (const matchingSeat of [0, 1, 2, 3]) {
+      let s = noMatch();
+      s.seats[matchingSeat].customer!.type = 'maki';
+      for (let i = 0; i < C; i++) {
+        s.queues[0][0] = i === C - 1 ? 'maki' : 'salmon';
+        s = launchPlate(s, 0);
+      }
+      s = tick(s, RULES.loadingDuration * (C - 1));
+      expect(s.plates).toHaveLength(C);
+      expect(s.plates.filter(plate => plate.type === 'maki')).toHaveLength(1);
+      expect(s.phase).toBe('playing');
+      s = tick(s, 10);
+      expect(s.phase).toBe('playing');
+      expect(s.delivered).toBe(1);
+      expect(s.plates).toHaveLength(C - 1);
+      expect(canLaunch(s)).toBe(true);
+    }
   });
   it('ends after a matching guest leaves only if the belt fills again without a match', () => {
     let s = noMatch();

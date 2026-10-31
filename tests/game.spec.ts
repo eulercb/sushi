@@ -1,4 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
 
 async function start(page: Page) {
   await page.clock.install({ time: new Date('2026-01-01T12:00:00Z') });
@@ -359,8 +361,8 @@ test('help describes unhurried play and a fresh run clears the belt', async ({ p
   await page.goto('./');
   await page.locator('#modal-help').tap();
   await expect(page.getByRole('dialog')).toContainText('Guests will wait');
-  await expect(page.getByRole('dialog')).toContainText('A full belt keeps rolling if a plate matches a guest');
-  await expect(page.getByRole('dialog')).toContainText('If no plates match, the run ends');
+  await expect(page.getByRole('dialog')).toContainText('When all slots are full, the belt keeps rolling if any plate matches any current guest');
+  await expect(page.getByRole('dialog')).toContainText('If none match, the run ends');
   await expect(page.getByRole('dialog')).toContainText('Hold keys 1–5');
   await page.locator('#primary').tap();
   await page.locator('#primary').tap();
@@ -486,6 +488,42 @@ test('installed service worker caches the app and playable offline reload', asyn
   await page.locator('#primary').tap();
   await page.locator('[data-lane="0"]').tap();
   await expect(page.locator('.plate')).toHaveCount(1);
+});
+
+test('a waiting update applies only when the player chooses to restart', async ({ page, baseURL }) => {
+  let revision = 1;
+  const server = createServer(async (request, response) => {
+    try {
+      const upstream = await fetch(new URL(request.url!, 'http://127.0.0.1:4173'));
+      response.statusCode = upstream.status;
+      const contentType = upstream.headers.get('content-type');
+      if (contentType) response.setHeader('content-type', contentType);
+      const body = Buffer.from(await upstream.arrayBuffer());
+      response.end(request.url?.split('?')[0].endsWith('/sw.js') ? Buffer.concat([body, Buffer.from(`\n// test revision ${revision}\n`)]) : body);
+    } catch { response.statusCode = 502; response.end(); }
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  try {
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Missing test server address');
+    await page.goto(`http://127.0.0.1:${address.port}${new URL(baseURL!).pathname}`);
+    await page.evaluate(async () => { await navigator.serviceWorker.ready; });
+    await expect.poll(() => page.evaluate(() => !!navigator.serviceWorker.controller)).toBe(true);
+    await page.locator('#primary').tap();
+    await page.locator('[data-lane="0"]').tap();
+    await expect(page.locator('.plate')).toHaveCount(1);
+    revision = 2;
+    await page.evaluate(async () => { await (await navigator.serviceWorker.ready).update(); });
+    await expect(page.locator('#update')).toBeVisible();
+    await expect(page.getByRole('dialog')).toBeHidden();
+    await expect(page.locator('.plate')).toHaveCount(1);
+    await page.locator('#update').tap();
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await expect(page.locator('.plate')).toHaveCount(0);
+  } finally {
+    server.close();
+  }
 });
 
 test('supported install prompt is offered and consumed without crowding a small phone', async ({ page }) => {

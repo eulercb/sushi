@@ -27,10 +27,24 @@ export function initPwa(): void {
     if (install) install.hidden = true;
   });
   if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+    const update = document.querySelector<HTMLButtonElement>('#update');
     const register = () => {
       void navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`, {
         scope: import.meta.env.BASE_URL,
         updateViaCache: 'none',
+      }).then(registration => {
+        const showUpdate = () => { if (update && registration.waiting && navigator.serviceWorker.controller) update.hidden = false; };
+        showUpdate();
+        registration.addEventListener('updatefound', () => {
+          registration.installing?.addEventListener('statechange', showUpdate);
+        });
+        update?.addEventListener('click', () => {
+          const waiting = registration.waiting;
+          if (!waiting) { update.hidden = true; return; }
+          update.disabled = true;
+          navigator.serviceWorker.addEventListener('controllerchange', () => location.reload(), { once: true });
+          waiting.postMessage('SKIP_WAITING');
+        });
       }).catch(() => { /* Online play still works if offline setup is unavailable. */ });
     };
     if (document.readyState === 'complete') register();

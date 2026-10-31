@@ -15,9 +15,13 @@ function random(s: GameState): number { s.rng = (Math.imul(s.rng, 1664525) + 101
 function sushi(s: GameState): SushiType { return SUSHI_TYPES[Math.floor(random(s) * SUSHI_TYPES.length)]; }
 function customer(s: GameState): Customer {
   const occupied = new Set(s.seats.flatMap(seat => seat.customer ? [seat.customer.type] : []));
-  const queued = [...new Set(s.queues.flat())].filter(type => !occupied.has(type));
-  // Queues can temporarily contain only types already requested by other guests.
-  const available = queued.length ? queued : SUSHI_TYPES.filter(type => !occupied.has(type));
+  const queued = [...new Set(s.queues.flat())];
+  // The chance of repeating an active request rises from 10% to 65% by 50 guests.
+  const repeatChance = .10 + .55 * Math.min(Math.max(s.served, 0), 50) / 50;
+  const repeat = occupied.size > 0 && random(s) < repeatChance;
+  const preferred = queued.filter(type => repeat ? occupied.has(type) : !occupied.has(type));
+  // If the chosen category is absent from previews, still honor the category.
+  const available = preferred.length ? preferred : SUSHI_TYPES.filter(type => repeat ? occupied.has(type) : !occupied.has(type));
   const type = available[Math.floor(random(s) * available.length)];
   const quantity = RULES.orderMin + Math.floor(random(s) * (RULES.orderMax - RULES.orderMin + 1));
   return { id: s.nextId++, type, quantity, remaining: quantity };
