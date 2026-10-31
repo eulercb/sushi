@@ -44,6 +44,8 @@ function setClass(node:HTMLElement, name:string, value:boolean) { if(node.classL
 function setData(node:HTMLElement, key:string, value:string) { if(node.dataset[key]!==value) node.dataset[key]=value; }
 let arenaWidth=0, arenaHeight=0, motionPhase=NaN, geometryDirty=true;
 const slotTransforms:string[]=[];
+// Each slot has only one visible occupant: its guide or its plate.
+const visibleSlotNodes:HTMLElement[]=slots.slice();
 const lastTransforms=new WeakMap<HTMLElement,string>();
 function positionNode(node:HTMLElement, transform:string) {
  if(lastTransforms.get(node)!==transform) { node.style.transform=transform; lastTransforms.set(node,transform); }
@@ -56,10 +58,9 @@ function updateMotion() {
    const angle=(state.beltPhase+i/RULES.capacity)*Math.PI*2;
    const transform=`translate3d(${-Math.sin(angle)*.35*arenaWidth}px, ${Math.cos(angle)*.35*arenaHeight}px, 0) translate(-50%, -50%)`;
    slotTransforms[i]=transform;
-   positionNode(slots[i],transform);
   }
  }
- for(const plate of state.plates) positionNode(plates.get(plate.id)!,slotTransforms[plate.slot]);
+ for(let i=0;i<RULES.capacity;i++) positionNode(visibleSlotNodes[i],slotTransforms[i]);
 }
 
 const lanes = Array.from(document.querySelectorAll<HTMLButtonElement>('.lane'));
@@ -155,7 +156,11 @@ function render() {
  }
  if(structureChanged) {
   occupiedSlots.clear();
-  for(const plate of state.plates) occupiedSlots.add(plate.slot);
+  for(let i=0;i<RULES.capacity;i++) visibleSlotNodes[i]=slots[i];
+  for(const plate of state.plates) {
+   occupiedSlots.add(plate.slot);
+   visibleSlotNodes[plate.slot]=plates.get(plate.id)!;
+  }
   slots.forEach((node,i)=>setClass(node,'occupied',occupiedSlots.has(i)));
  }
  updateMotion();
@@ -185,9 +190,16 @@ function frame(now:number) {
  if(state.phase!=='playing' || document.hidden) { previous=null; return; }
  const delta=previous===null?0:Math.min(.1,(now-previous)/1000);
  previous=now;
+ const before=state;
+ const nextId=state.nextId;
+ const pendingCount=state.pending.length;
+ const plateCount=state.plates.length;
  state=advanceGameInPlace(state,delta);
  if(held && now>=nextRepeat && canRepeatLaunch(state)) launch(held.lane,false);
- render();
+ // Ordinary movement changes only positions. Insertions, deliveries and new
+ // customers allocate IDs; launches can also replace state or change the queue.
+ if(state!==before || state.nextId!==nextId || state.pending.length!==pendingCount || state.plates.length!==plateCount || state.phase!=='playing') render();
+ else { updateMotion(); syncAnimation(); }
 }
 const resizeObserver=new ResizeObserver(entries=> {
  const size=entries[0].contentRect;

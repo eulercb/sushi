@@ -42,6 +42,21 @@ A fresh comparison used the same viewport, 4× CPU throttle, 35-input workload, 
 
 The animation pass costs approximately 24% more active main-thread time than the lean optimized build in this workload. It remains approximately 31% below the original pre-optimization measurement; that older comparison came from a separate run. This is a visual upgrade with measurable processing cost, not a new performance optimization. The production JavaScript grows from about 11.35 KB to 17.95 KB gzipped, including the richer SVG artwork and Motion Mini. Raw measurements: [animation-baseline.json](performance/animation-baseline.json) and [animated.json](performance/animated.json).
 
+## Frame work reduction
+
+Quiet animation frames now update only belt motion. Changes to the game state that affect the interface still run the full render. Each belt slot updates either its visible guide or its plate, rather than also moving the hidden guide under an occupied slot. When a plate leaves, its guide is positioned before it becomes visible. The game still uses the browser's `requestAnimationFrame` cadence; there is no artificial frame-rate timer. The existing 100 ms frame-delta cap remains, so a long stall can slow simulated time rather than attempting a large catch-up.
+
+Production builds before and after this change were profiled sequentially with the same 390 × 844 viewport, device pixel ratio 2, and 4× CPU throttling. In both active samples, 34 plates were present at the start and 17 at the end. Values below are means of the two eight-second samples.
+
+| Metric | Before | After |
+| --- | ---: | ---: |
+| Main-thread task time | 5,047 ms | 4,579 ms |
+| Script time | 861 ms | 467 ms |
+| Animation callbacks | 475 | 476 |
+| Layout operations | 85 | 85 |
+
+These are approximately 9% less main-thread task time and 46% less script time in this workload. Callback counts are not displayed frames per second. The browser, hardware, power settings, and display refresh rate determine actual results; these desktop measurements do not establish performance on a phone. Raw measurements: [frame-baseline.json](performance/frame-baseline.json) and [frame-optimized.json](performance/frame-optimized.json).
+
 ## Reproduce
 
 Install Chromium with `npx playwright install chromium` if it is not already available. Build and serve each revision on its own local port. For a root deployment:
