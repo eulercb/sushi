@@ -111,7 +111,12 @@ function step(s: GameState, dt: number) {
 /** Subdivision preserves station crossings and customer replacement for large ticks. */
 export function tick(state: GameState, seconds: number): GameState {
   if (state.phase !== 'playing' || !Number.isFinite(seconds) || seconds <= 0) return state;
-  const s = structuredClone(state); let remaining = seconds;
+  return advanceGameInPlace(structuredClone(state), seconds);
+}
+/** Advance exclusively owned state without cloning; callers must not share snapshots. */
+export function advanceGameInPlace(s: GameState, seconds: number): GameState {
+  if (s.phase !== 'playing' || !Number.isFinite(seconds) || seconds <= 0) return s;
+  let remaining = seconds;
   while (remaining > 1e-9 && s.phase === 'playing') {
     if (s.pending.length) {
       const dt = Math.min(remaining, s.loadingRemaining);

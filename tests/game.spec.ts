@@ -12,6 +12,111 @@ async function expectNoOverflow(page: Page) {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 }
 const queues = (page: Page) => page.locator('.lane-pieces').evaluateAll(nodes => nodes.map(node => node.innerHTML));
+
+test('animation frames stop while ready and paused, and restart on resume', async ({ page }) => {
+  // Use real timers: Playwright's virtual clock replaces the RAF wrapper itself.
+  await page.addInitScript(() => {
+    const nativeFrame = window.requestAnimationFrame.bind(window);
+    let requests = 0;
+    Object.defineProperty(window, '__testFrameRequests', { get: () => requests });
+    window.requestAnimationFrame = callback => {
+      requests++;
+      return nativeFrame(callback);
+    };
+  });
+  const frames = () => page.evaluate(() => Number(Reflect.get(window, '__testFrameRequests')));
+  await page.goto('./');
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await page.waitForTimeout(150);
+  const ready = await frames();
+  await page.waitForTimeout(500);
+  expect(await frames()).toBe(ready);
+  await page.locator('#primary').tap();
+  await expect.poll(frames).toBeGreaterThan(ready);
+  await page.locator('#pause').tap();
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await page.waitForTimeout(150);
+  const paused = await frames();
+  await page.waitForTimeout(500);
+  expect(await frames()).toBe(paused);
+  await page.locator('#primary').tap();
+  await expect.poll(frames).toBeGreaterThan(paused);
+});
+
+test('quiet belt motion updates transforms without cloning state or rewriting the HUD', async ({ page }) => {
+  await page.addInitScript(() => {
+    const nativeClone = window.structuredClone.bind(window);
+    let clones = 0;
+    Object.defineProperty(window, '__testStateClones', { get: () => clones });
+    window.structuredClone = (...args: Parameters<typeof structuredClone>) => {
+      clones++;
+      return nativeClone(...args);
+    };
+  });
+  await page.goto('./');
+  await page.locator('#primary').tap();
+  await page.waitForTimeout(150);
+  const before = await page.evaluate(() => {
+    document.documentElement.dataset.hudMutations = '0';
+    const observer = new MutationObserver(records => {
+      document.documentElement.dataset.hudMutations = String(Number(document.documentElement.dataset.hudMutations) + records.length);
+    });
+    for (const selector of ['.hud', '.guest', '.lane-pieces', '#status']) {
+      document.querySelectorAll(selector).forEach(node => observer.observe(node, { subtree: true, childList: true, characterData: true, attributes: true }));
+    }
+    return {
+      clones: Number(Reflect.get(window, '__testStateClones')),
+      styles: Array.from(document.querySelectorAll<HTMLElement>('.slot'), node => ({ transform: node.style.transform, left: node.style.left, top: node.style.top })),
+    };
+  });
+  await page.waitForTimeout(500);
+  const after = await page.evaluate(() => ({
+    clones: Number(Reflect.get(window, '__testStateClones')),
+    mutations: Number(document.documentElement.dataset.hudMutations),
+    styles: Array.from(document.querySelectorAll<HTMLElement>('.slot'), node => ({ transform: node.style.transform, left: node.style.left, top: node.style.top })),
+  }));
+  expect(Number.isFinite(before.clones)).toBe(true);
+  expect(after.clones).toBe(before.clones);
+  expect(after.mutations).toBe(0);
+  expect(after.styles).toHaveLength(40);
+  expect(after.styles.map(slot => slot.transform)).not.toEqual(before.styles.map(slot => slot.transform));
+  expect(after.styles.map(({ left, top }) => ({ left, top }))).toEqual(before.styles.map(({ left, top }) => ({ left, top })));
+});
+
+test('fractional progress percentages do not rewrite an unchanged occupied HUD', async ({ page }) => {
+  await start(page);
+  await page.clock.pauseAt(new Date('2026-01-01T12:00:01Z'));
+  // Accepted queue inputs keep loading active, without moving plates past guests.
+  for (let request = 0; request < 23; request++) await page.keyboard.press('1');
+  await page.clock.runFor(4250);
+  await expect(page.locator('#capacity')).toHaveText('22 / 40');
+  await expect(page.locator('.plate')).toHaveCount(22);
+  await expect(page.locator('.launch-gate')).toHaveClass(/loading/);
+  await expect.poll(() => page.locator('#progress').evaluate(node => {
+    const bar = node.getBoundingClientRect();
+    return bar.width / node.parentElement!.getBoundingClientRect().width;
+  })).toBeCloseTo(22 / 40, 2);
+  await page.evaluate(() => {
+    document.documentElement.dataset.occupiedHudMutations = '0';
+    new MutationObserver(records => {
+      document.documentElement.dataset.occupiedHudMutations = String(Number(document.documentElement.dataset.occupiedHudMutations) + records.length);
+    }).observe(document.querySelector('.hud')!, { subtree: true, childList: true, characterData: true, attributes: true });
+  });
+  await page.clock.runFor(80);
+  await expect(page.locator('#capacity')).toHaveText('22 / 40');
+  expect(await page.evaluate(() => Number(document.documentElement.dataset.occupiedHudMutations))).toBe(0);
+  await page.clock.runFor(100);
+  await expect(page.locator('#capacity')).toHaveText('23 / 40');
+  await expect(page.locator('.plate')).toHaveCount(23);
+  await expect(page.locator('.launch-gate')).not.toHaveClass(/loading/);
+  // Allow the observer's insertion-update delivery before measuring quiet motion.
+  await page.evaluate(() => { document.documentElement.dataset.occupiedHudMutations = '0'; });
+  const transform = await page.locator('.slot').first().getAttribute('style');
+  await page.clock.runFor(80);
+  await expect(page.locator('#capacity')).toHaveText('23 / 40');
+  expect(await page.locator('.slot').first().getAttribute('style')).not.toBe(transform);
+  expect(await page.evaluate(() => Number(document.documentElement.dataset.occupiedHudMutations))).toBe(0);
+});
 async function expectSeparatedPlates(page: Page) {
   const plates = await page.locator('.plate').evaluateAll(nodes => nodes.map(node => {
     const rect = node.getBoundingClientRect();

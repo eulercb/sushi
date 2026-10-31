@@ -1,9 +1,76 @@
 import { describe, it, expect } from 'vitest';
-import { createGame, startGame, launchPlate, tick, pauseGame, resumeGame, restartGame, canLaunch, canRepeatLaunch, RULES, SUSHI_TYPES } from './engine';
+import { createGame, startGame, launchPlate, tick, advanceGameInPlace, pauseGame, resumeGame, restartGame, canLaunch, canRepeatLaunch, RULES, SUSHI_TYPES } from './engine';
 const C = RULES.capacity;
 const playing = () => startGame(createGame(71));
 const noMatch = () => { const s = playing(); s.seats.forEach(seat => { seat.customer!.type = 'tuna'; }); s.queues.forEach(queue => queue.fill('salmon')); return s; };
 describe('cozy sushi service', () => {
+  it('advances owned state identically to immutable ticks through seeded mixed actions', () => {
+    for (const seed of [0, 71, 4294967295]) {
+      let immutable = startGame(createGame(seed));
+      let owned = structuredClone(immutable);
+      for (let i = 0; i < 300; i++) {
+        if (i % 4 === 0) {
+          immutable = launchPlate(immutable, i % RULES.laneCount);
+          owned = launchPlate(owned, i % RULES.laneCount);
+        }
+        if (i % 37 === 0) {
+          immutable = pauseGame(immutable); owned = pauseGame(owned);
+        } else if (i % 37 === 1) {
+          immutable = resumeGame(immutable); owned = resumeGame(owned);
+        }
+        const before = structuredClone(immutable);
+        const input = immutable;
+        const seconds = [.016, .1, .2, 1.7][i % 4];
+        immutable = tick(input, seconds);
+        expect(input).toEqual(before);
+        expect(advanceGameInPlace(owned, seconds)).toBe(owned);
+        expect(owned).toEqual(immutable);
+      }
+    }
+  });
+  it('keeps both advancement APIs unchanged for frozen phases and invalid durations', () => {
+    const active = launchPlate(launchPlate(playing(), 0), 1);
+    const states = [createGame(), pauseGame(active), { ...structuredClone(active), phase: 'lost' as const }];
+    for (const state of states) {
+      const before = structuredClone(state);
+      expect(advanceGameInPlace(state, 10)).toBe(state);
+      expect(tick(state, 10)).toBe(state);
+      expect(state).toEqual(before);
+    }
+    for (const seconds of [NaN, Infinity, -Infinity, 0, -1]) {
+      const state = structuredClone(active);
+      const before = structuredClone(state);
+      expect(advanceGameInPlace(state, seconds)).toBe(state);
+      expect(tick(state, seconds)).toBe(state);
+      expect(state).toEqual(before);
+    }
+  });
+  it('preserves loading, service and replacement across large and subdivided advances', () => {
+    let initial = noMatch();
+    initial.seats[0].customer!.type = 'salmon';
+    initial.seats[0].customer!.remaining = 1;
+    for (let i = 0; i < 4; i++) initial = launchPlate(initial, 0);
+    const large = advanceGameInPlace(structuredClone(initial), 5);
+    const small = structuredClone(initial);
+    for (let i = 0; i < 100; i++) advanceGameInPlace(small, .05);
+    expect(large.served).toBeGreaterThan(0);
+    expect(large.pending).toEqual([]);
+    expect(large.seats).toEqual(small.seats);
+    expect(large.events).toEqual(small.events);
+    expect(large.rng).toBe(small.rng);
+    expect(large.queues).toEqual(small.queues);
+    expect(large.elapsed).toBeCloseTo(small.elapsed, 10);
+    expect(large.beltPhase).toBeCloseTo(small.beltPhase, 10);
+    expect(large.plates).toHaveLength(small.plates.length);
+    large.plates.forEach((plate, i) => {
+      expect(plate.id).toBe(small.plates[i].id);
+      expect(plate.type).toBe(small.plates[i].type);
+      expect(plate.slot).toBe(small.plates[i].slot);
+      expect(plate.position).toBeCloseTo(small.plates[i].position, 10);
+      expect(plate.distance).toBeCloseTo(small.plates[i].distance, 10);
+    });
+    expect(tick(initial, 5)).toEqual(large);
+  });
   it('mixes all eight varieties into exactly five preview lanes with varied seeded fronts', () => {
     expect(SUSHI_TYPES).toHaveLength(8);
     const fronts = new Set<string>();

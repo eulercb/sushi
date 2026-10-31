@@ -39,6 +39,8 @@ npm run test:e2e
 
 ## Architecture
 
+See [performance notes](docs/performance.md) for the phone-rendering improvements, measured comparison, and reproducible profiling command.
+
 `src/engine.ts` contains the deterministic simulation and seeded random state. Its immutable state transitions are independent of the browser and covered by unit tests. `src/main.ts` owns rendering, animation, accessibility, sound, and optional local storage. `src/art.ts` provides the original inline SVG illustrations; `src/style.css` handles responsive presentation.
 
 `src/pwa.ts` registers the production service worker and connects browser installation events. `public/sw.js` caches a complete release; the Vite build plugin injects the generated asset list and a content hash so HTML and assets stay in sync. Updates activate after existing app windows close. No external fonts or runtime services are required.
