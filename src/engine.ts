@@ -14,7 +14,10 @@ const wrap = (value: number) => ((value % 1) + 1) % 1;
 function random(s: GameState): number { s.rng = (Math.imul(s.rng, 1664525) + 1013904223) >>> 0; return s.rng / 4294967296; }
 function sushi(s: GameState): SushiType { return SUSHI_TYPES[Math.floor(random(s) * SUSHI_TYPES.length)]; }
 function customer(s: GameState): Customer {
-  const available = [...new Set(s.queues.flat())];
+  const occupied = new Set(s.seats.flatMap(seat => seat.customer ? [seat.customer.type] : []));
+  const queued = [...new Set(s.queues.flat())].filter(type => !occupied.has(type));
+  // Queues can temporarily contain only types already requested by other guests.
+  const available = queued.length ? queued : SUSHI_TYPES.filter(type => !occupied.has(type));
   const type = available[Math.floor(random(s) * available.length)];
   const quantity = RULES.orderMin + Math.floor(random(s) * (RULES.orderMax - RULES.orderMin + 1));
   return { id: s.nextId++, type, quantity, remaining: quantity };
@@ -34,7 +37,7 @@ export function createGame(seed = 42): GameState {
   }
   s.queues = Array.from({ length: RULES.laneCount }, (_, lane) =>
     Array.from({ length: RULES.queueDepth }, (_, depth) => bag[depth * RULES.laneCount + lane]));
-  s.seats = STATIONS.map(() => ({ customer: customer(s), returnsIn: 0 }));
+  for (const _station of STATIONS) s.seats.push({ customer: customer(s), returnsIn: 0 });
   return s;
 }
 export function startGame(s: GameState): GameState { return s.phase === 'ready' ? { ...s, phase: 'playing' } : s; }
