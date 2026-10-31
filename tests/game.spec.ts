@@ -111,10 +111,15 @@ test('fractional progress percentages do not rewrite an unchanged occupied HUD',
   await expect(page.locator('.launch-gate')).not.toHaveClass(/loading/);
   // Allow the observer's insertion-update delivery before measuring quiet motion.
   await page.evaluate(() => { document.documentElement.dataset.occupiedHudMutations = '0'; });
-  const transform = await page.locator('.slot').first().getAttribute('style');
+  const occupant = page.locator('.plate').first();
+  await expect(occupant).toBeVisible();
+  const plate = (await occupant.elementHandle())!;
+  const transform = await plate.getAttribute('style');
+  expect(transform).toBeTruthy();
   await page.clock.runFor(80);
   await expect(page.locator('#capacity')).toHaveText('23 / 40');
-  expect(await page.locator('.slot').first().getAttribute('style')).not.toBe(transform);
+  expect(await plate.evaluate(node => node.isConnected)).toBe(true);
+  expect(await plate.getAttribute('style')).not.toBe(transform);
   expect(await page.evaluate(() => Number(document.documentElement.dataset.occupiedHudMutations))).toBe(0);
 });
 async function expectSeparatedPlates(page: Page) {
