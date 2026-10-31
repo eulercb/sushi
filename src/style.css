@@ -42,3 +42,9 @@ footer:has(#install:not([hidden])) .footer-note{display:none}footer button{min-w
 
 /* Motion shares the arena center; each item retains its upright artwork. */
 .slot,.plate{left:50%;top:50%}
+
+/* Character poses stay inside the illustrated rig; belt positions belong to the renderer. */
+.portrait,.chef-portrait{transform-origin:50% 85%}.character-head,.chef-head{transform-box:fill-box;transform-origin:50% 85%}.character-eyes,.chef-eyes{transform-box:fill-box;transform-origin:center}.character-arm-left,.character-arm-right,.chef-arm{transform-box:fill-box;transform-origin:50% 15%}.avatar{transform-origin:50% 100%}.guest.celebrating .avatar{opacity:1}.guest.savoring .face-neutral,.guest.celebrating .face-neutral{opacity:0}.guest.savoring .face-happy,.guest.celebrating .face-happy{opacity:1}.plate svg{transform-origin:center}.order{transform-origin:25% 100%}#effects{position:absolute;inset:0;z-index:6;pointer-events:none;overflow:hidden}.joy-spark,.joy-caption{position:absolute;pointer-events:none;white-space:nowrap;color:#bb7651;text-shadow:0 1px #fff9e9}.joy-spark{font:700 21px Georgia}.joy-caption{font-size:11px;font-weight:bold;background:#fff8e9;border:1px solid #e5c897;border-radius:20px;padding:4px 9px;color:#547b68;z-index:1}.celebration-banner{position:absolute;top:43%;left:50%;max-width:88%;white-space:nowrap;padding:8px 13px;background:#fff6db;border:1px solid #d4b37d;border-radius:20px;color:#8c633e;font:italic 12px Georgia;box-shadow:0 3px 0 #b8956030}.primary{transition:background-color .15s}.primary:hover{background:#bc6347}.primary:active{transform:translateY(2px) scale(.99)}
+.empty .avatar{opacity:0}.guest.empty.celebrating .avatar{opacity:1}
+
+.character-breath{width:100%;transform-origin:50% 85%}.chef{transform-origin:50% 85%}

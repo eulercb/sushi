@@ -1,10 +1,10 @@
 # Phone rendering performance
 
-The rendering update reduces repeated browser work while keeping the conveyor speed, 40-item capacity, loading priority, artwork, and controls intact. It adds no runtime dependencies.
+The rendering update in `390cb6a` reduces repeated browser work while keeping the conveyor speed, 40-item capacity, loading priority, artwork, and controls intact. That optimization added no runtime dependencies. The subsequent character-animation pass adds Motion Mini; its separate comparison is recorded below.
 
 ## What changed
 
-- Motion uses `translate3d` with cached arena dimensions instead of rewriting `left` and `top`. Slot coordinates are calculated once per frame and shared with plates.
+- Belt movement uses `translate3d` with cached arena dimensions instead of rewriting `left` and `top`. Slot coordinates are calculated once per frame and shared with plates.
 - HUD text, occupancy, queue previews, and customer artwork update when their values change. The capacity bar animates its scale instead of its width, avoiding layout work during that animation.
 - The app advances exclusively owned simulation state in place. The exported immutable `tick()` still clones and delegates to the same simulation implementation, preserving its API and test contract.
 - The animation loop stops on the welcome screen, while paused, after game over, and when hidden. Resize updates still run when needed.
@@ -24,6 +24,23 @@ Baseline: commit `333ed22`. Both production builds were measured sequentially wi
 This is approximately 44% less main-thread task time and 95% fewer layout operations in this workload. Active animation callback counts remained near the display cadence; the improvement does not come from slowing the game. Callback counts are not a measurement of displayed FPS.
 
 These are relative desktop Chrome measurements with CPU throttling, not physical-phone temperature, battery, GPU, or retained-memory measurements. Device and browser results can differ. Raw measurements are in [baseline.json](performance/baseline.json) and [optimized.json](performance/optimized.json).
+
+## Character-animation pass
+
+The richer original SVG portraits use Motion Mini (`motion/mini`) for native Web Animations. Breathing runs on HTML wrappers and bite reactions on the outer avatar: continuously transforming SVG rigs, or transforming a head for every bite, caused avoidable layout work in the initial prototype. Blinks use opacity. Articulated SVG head and arm poses are reserved for short order-completion cheers.
+
+Ten native idle animations run only during visible, active play. There is no additional JavaScript animation-frame loop. Pause, restart, tab hiding, and live reduced-motion changes cancel native controls and restore their original poses. Sparkles and captions share a 24-node cap and expire within one second. Reduced motion suppresses these effects while retaining the playable game.
+
+A fresh comparison used the same viewport, 4× CPU throttle, 35-input workload, and two eight-second samples as above, run sequentially without competing game browsers. Both versions began with 31 plates and ended with 16.
+
+| Metric | Optimized before animation (`390cb6a`) | Animated |
+| --- | ---: | ---: |
+| Main-thread task time per active sample, mean | 4,036 ms | 5,000 ms |
+| Layout operations per active sample, mean | 24 | 108 |
+| State copies per active sample | 0 | 0 |
+| JavaScript animation callbacks on welcome screen / paused, 4 seconds each | 0 / 0 | 0 / 0 |
+
+The animation pass costs approximately 24% more active main-thread time than the lean optimized build in this workload. It remains approximately 31% below the original pre-optimization measurement; that older comparison came from a separate run. This is a visual upgrade with measurable processing cost, not a new performance optimization. The production JavaScript grows from about 11.35 KB to 17.95 KB gzipped, including the richer SVG artwork and Motion Mini. Raw measurements: [animation-baseline.json](performance/animation-baseline.json) and [animated.json](performance/animated.json).
 
 ## Reproduce
 

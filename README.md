@@ -48,3 +48,9 @@ See [performance notes](docs/performance.md) for the phone-rendering improvement
 ## Deployment
 
 GitHub Actions tests and builds pushes to `main`, runs Chromium smoke tests, and deploys to GitHub Pages. Select **GitHub Actions** as the repository's Pages source once. The workflow reads the configured Pages URL to build and test at `/` for `sushi.zen.dev.br`, or `/sushi/` for the GitHub project URL. See [deployment instructions](docs/deployment.md) for setup, DNS, offline verification, updates, and custom paths. Local builds default to `/sushi/`; verify a domain root with `BASE_PATH=/ npm run build` followed by `BASE_PATH=/ npm run test:e2e`.
+
+## Character animation
+
+Original SVG characters breathe, blink, savor each bite, and cheer when an order is complete. The chef flicks a hand as sushi is accepted; newly loaded sushi settles into its plate. Every fifth happy guest earns a little celebratory ribbon.
+
+`src/animations.ts` uses Motion Mini's native Web Animations for transforms and opacity. Scene loops and transient effects cancel on pause, restart, tab hiding, and live reduced-motion preference changes. Effects have a shared 24-node limit and last at most one second; belt movement keeps its existing renderer. Reduced motion retains the illustrated smiles and clear order feedback without moving celebrations.

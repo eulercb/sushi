@@ -27,7 +27,7 @@ test('animation frames stop while ready and paused, and restart on resume', asyn
   const frames = () => page.evaluate(() => Number(Reflect.get(window, '__testFrameRequests')));
   await page.goto('./');
   await expect(page.getByRole('dialog')).toBeVisible();
-  await page.waitForTimeout(150);
+  await page.waitForTimeout(500);
   const ready = await frames();
   await page.waitForTimeout(500);
   expect(await frames()).toBe(ready);
@@ -35,7 +35,7 @@ test('animation frames stop while ready and paused, and restart on resume', asyn
   await expect.poll(frames).toBeGreaterThan(ready);
   await page.locator('#pause').tap();
   await expect(page.getByRole('dialog')).toBeVisible();
-  await page.waitForTimeout(150);
+  await page.waitForTimeout(500);
   const paused = await frames();
   await page.waitForTimeout(500);
   expect(await frames()).toBe(paused);
@@ -55,7 +55,7 @@ test('quiet belt motion updates transforms without cloning state or rewriting th
   });
   await page.goto('./');
   await page.locator('#primary').tap();
-  await page.waitForTimeout(150);
+  await page.waitForTimeout(750);
   const before = await page.evaluate(() => {
     document.documentElement.dataset.hudMutations = '0';
     const observer = new MutationObserver(records => {
@@ -504,4 +504,129 @@ test('supported install prompt is offered and consumed without crowding a small 
   await expect(page.locator('#install')).toBeVisible();
   await page.evaluate(() => window.dispatchEvent(new Event('appinstalled')));
   await expect(page.locator('#install')).toBeHidden();
+});
+
+
+const repeatingSceneAnimations = (page: Page) => page.evaluate(() =>
+  document.getAnimations().filter(animation => animation.effect?.getTiming().iterations === Infinity &&
+    (animation.effect as KeyframeEffect).target instanceof Element &&
+    ((animation.effect as KeyframeEffect).target as Element).closest('.arena')).length);
+
+test('character rigs breathe and blink only during active play and survive repeated restarts', async ({ page }) => {
+  await page.goto('./');
+  await expect(page.locator('.character-head')).toHaveCount(4);
+  await expect(page.locator('.character-arm-left')).toHaveCount(4);
+  await expect(page.locator('.chef .chef-hand')).toHaveCount(1);
+  expect(await repeatingSceneAnimations(page)).toBe(0);
+  await page.locator('#primary').tap();
+  await expect.poll(() => repeatingSceneAnimations(page)).toBe(10);
+  for (let restart = 0; restart < 3; restart++) {
+    await page.locator('#pause').tap();
+    await page.waitForTimeout(500);
+    expect(await repeatingSceneAnimations(page)).toBe(0);
+    await page.locator('#restart').tap();
+    await expect.poll(() => repeatingSceneAnimations(page)).toBe(10);
+  }
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await expect(page.getByRole('dialog')).toBeVisible();
+  expect(await repeatingSceneAnimations(page)).toBe(0);
+  await page.evaluate(() => { Object.defineProperty(document, 'hidden', { configurable: true, value: false }); });
+  await page.locator('#primary').tap();
+  await expect.poll(() => repeatingSceneAnimations(page)).toBe(10);
+  await page.waitForTimeout(750);
+  expect(await page.evaluate(() => document.getAnimations().some(animation => {
+    const target = (animation.effect as KeyframeEffect | null)?.target;
+    return target instanceof Element && !target.isConnected;
+  }))).toBe(false);
+});
+
+test('matching plates trigger savoring, celebration and bounded effects that clean up', async ({ page }) => {
+  test.setTimeout(60000);
+  await start(page);
+  await page.evaluate(() => {
+    const seen = { savoring: false, blinkingDuringBite: false, celebrating: false, effects: false, maximum: 0 };
+    Reflect.set(window, '__testReactions', seen);
+    new MutationObserver(records => {
+      for (const record of records) if (record.type === 'attributes') {
+        const classes = `${record.oldValue || ''} ${(record.target as Element).getAttribute('class') || ''}`;
+        seen.savoring ||= classes.includes('savoring');
+        const guest = record.target as Element;
+        if (guest.matches('.guest.savoring')) {
+          seen.blinkingDuringBite ||= !!guest.querySelector('.character-eyes')?.getAnimations().some(animation =>
+            animation.playState === 'running' && animation.effect?.getTiming().iterations === Infinity);
+        }
+        seen.celebrating ||= classes.includes('celebrating');
+      }
+      const count = document.querySelectorAll('.joy-spark, .joy-caption, .celebration-banner').length;
+      seen.effects ||= count > 0;
+      seen.maximum = Math.max(seen.maximum, count);
+    }).observe(document.querySelector('.arena')!, { subtree: true, childList: true, attributes: true, attributeOldValue: true, attributeFilter: ['class'] });
+  });
+  for (let step = 0; step < 100 && await page.locator('#served').textContent() === '0'; step++) {
+    const needs = await page.locator('.guest').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-type')));
+    const fronts = await page.locator('.lane').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-type')));
+    const lane = fronts.findIndex(type => needs.includes(type));
+    await page.keyboard.press(String((lane >= 0 ? lane : step % 5) + 1));
+    await page.clock.runFor(1500);
+  }
+  expect(Number(await page.locator('#served').textContent())).toBeGreaterThan(0);
+  const seen = await page.evaluate(() => Reflect.get(window, '__testReactions'));
+  expect(seen.savoring).toBe(true);
+  expect(seen.blinkingDuringBite).toBe(true);
+  expect(seen.celebrating).toBe(true);
+  expect(seen.effects).toBe(true);
+  expect(seen.maximum).toBeLessThanOrEqual(24);
+  // WAAPI uses real compositor time even while the game clock is virtual.
+  await expect(page.locator('.joy-spark, .joy-caption, .celebration-banner')).toHaveCount(0, { timeout: 3000 });
+});
+
+test('reduced motion applies at startup and live changes while tap and serve remain playable', async ({ page }) => {
+  test.setTimeout(60000);
+  await page.addInitScript(() => {
+    const clone = structuredClone.bind(window);
+    Reflect.set(window, '__reducedClones', 0);
+    window.structuredClone = (...args: Parameters<typeof structuredClone>) => {
+      Reflect.set(window, '__reducedClones', Number(Reflect.get(window, '__reducedClones')) + 1);
+      return clone(...args);
+    };
+  });
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await start(page);
+  expect(await repeatingSceneAnimations(page)).toBe(0);
+  const clones = await page.evaluate(() => {
+    Reflect.set(window, '__reducedHudWrites', 0);
+    new MutationObserver(records => Reflect.set(window, '__reducedHudWrites', Number(Reflect.get(window, '__reducedHudWrites')) + records.length))
+      .observe(document.querySelector('.hud')!, { subtree: true, childList: true, characterData: true, attributes: true });
+    return Reflect.get(window, '__reducedClones');
+  });
+  await page.clock.runFor(500);
+  expect(await page.evaluate(() => Reflect.get(window, '__reducedClones'))).toBe(clones);
+  expect(await page.evaluate(() => Reflect.get(window, '__reducedHudWrites'))).toBe(0);
+  await page.locator('.lane').first().tap();
+  await expect(page.locator('.plate')).toHaveCount(1);
+  await expect(page.locator('.joy-spark, .joy-caption, .celebration-banner')).toHaveCount(0);
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await expect.poll(() => repeatingSceneAnimations(page)).toBe(10);
+  await page.locator('#pause').tap();
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await expect.poll(() => repeatingSceneAnimations(page)).toBe(0);
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await expect(page.getByRole('dialog')).toHaveCSS('opacity', '1');
+  await page.locator('#primary').tap();
+  const initialRemaining = await page.locator('.guest').evaluateAll(nodes => nodes.reduce((sum, node) => sum + Number(node.getAttribute('data-remaining')), 0));
+  for (let step = 0; step < 30; step++) {
+    const needs = await page.locator('.guest').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-type')));
+    const fronts = await page.locator('.lane').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-type')));
+    const lane = fronts.findIndex(type => needs.includes(type));
+    await page.keyboard.press(String((lane >= 0 ? lane : step % 5) + 1));
+    await page.clock.runFor(1500);
+    const remaining = await page.locator('.guest').evaluateAll(nodes => nodes.reduce((sum, node) => sum + Number(node.getAttribute('data-remaining')), 0));
+    if (remaining < initialRemaining) break;
+  }
+  expect(await page.locator('.guest').evaluateAll(nodes => nodes.reduce((sum, node) => sum + Number(node.getAttribute('data-remaining')), 0))).toBeLessThan(initialRemaining);
+  expect(await repeatingSceneAnimations(page)).toBe(0);
+  await expect(page.locator('.joy-spark, .joy-caption, .celebration-banner')).toHaveCount(0);
 });

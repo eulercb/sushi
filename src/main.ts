@@ -1,4 +1,5 @@
 import './style.css';
+import { createGameAnimations } from './animations';
 import { initPwa } from './pwa';
 import { readRanking, recordResult } from './ranking';
 import { createGame, startGame, restartGame, pauseGame, resumeGame, launchPlate, advanceGameInPlace, canLaunch, canRepeatLaunch, RULES, type SushiType } from './engine';
@@ -63,6 +64,7 @@ function updateMotion() {
 
 const lanes = Array.from(document.querySelectorAll<HTMLButtonElement>('.lane'));
 const lanePieces=lanes.map(button=>button.querySelector<HTMLElement>('.lane-pieces')!);
+const animations=createGameAnimations({effects:el('effects'),chef:document.querySelector<HTMLElement>('.chef')!,guests,lanes});
 const queueKeys:string[] = [];
 const guestKeys:string[] = [];
 const plates = new Map<number,HTMLElement>();
@@ -80,7 +82,7 @@ function openHelp() { clearHold(); help=true; if(state.phase==='playing') state=
 el('help').onclick=openHelp;
 function openRanking() { clearHold(); ranking=true; if(state.phase==='playing') state=pauseGame(state); lastPhase=''; render(); }
 el('ranking').onclick=openRanking;
-function launch(index:number, immediate=true) { if(!canLaunch(state)) return; state=launchPlate(state,index); nextRepeat=performance.now()+RULES.repeatInterval*1000; tone(360+index*70); if(immediate) render(); }
+function launch(index:number, immediate=true) { if(!canLaunch(state)) return; state=launchPlate(state,index); animations.launch(index); nextRepeat=performance.now()+RULES.repeatInterval*1000; tone(360+index*70); if(immediate) render(); }
 lanes.forEach((button,i)=> {
  button.onpointerdown=event=> { if(event.button!==0 || state.phase!=='playing' || held) return; event.preventDefault(); button.focus({preventScroll:true}); button.setPointerCapture(event.pointerId); held={lane:i,pointer:event.pointerId}; button.classList.add('held'); launch(i); };
  button.onpointermove=event=> { if(held?.pointer!==event.pointerId) return; const rect=button.getBoundingClientRect(); if(event.clientX<rect.left || event.clientX>rect.right || event.clientY<rect.top || event.clientY>rect.bottom) clearHold(); };
@@ -108,9 +110,11 @@ function showOverlay() {
  document.getElementById('modal-help')?.addEventListener('click',openHelp);
  document.getElementById('modal-ranking')?.addEventListener('click',openRanking);
  document.getElementById('restart')?.addEventListener('click',()=>{clearHold();state=restartGame(state,Date.now());newRun();lastPhase='';render();});
+ animations.modal(overlay.querySelector('.modal')!);
  requestAnimationFrame(()=>el('primary').focus({preventScroll:true}));
 }
 function render() {
+ animations.setPlaying(state.phase==='playing' && !document.hidden);
  setText(el('served'),String(state.served));
  const count=state.plates.length;
  setText(el('capacity'),`${count} / ${RULES.capacity}`);
@@ -125,7 +129,7 @@ function render() {
  setDisabled(el('pause') as HTMLButtonElement,state.phase==='ready'||state.phase==='lost');
  if(state.phase!=='playing') clearHold();
  lanes.forEach((button,i)=> { setDisabled(button,state.phase!=='playing'); const key=state.queues[i].join(); if(queueKeys[i]!==key) { queueKeys[i]=key; button.dataset.type=state.queues[i][0]; lanePieces[i].innerHTML=state.queues[i].map((type,j)=>`<span class="piece piece-${j}" data-type="${type}">${sushiSvg(type)}</span>`).join(''); button.setAttribute('aria-label',`Lane ${i+1}: send ${names[state.queues[i][0]]}. Next ${names[state.queues[i][1]]}`); } });
- state.seats.forEach((seat,i)=> { const {node:guest,order,avatar}=guests[i]; const customer=seat.customer; const key=customer?`${customer.id}-${customer.type}-${customer.remaining}`:'empty'; if(guestKeys[i]!==key) { const changed=guestKeys[i]?.split('-')[0]!==key.split('-')[0]; guestKeys[i]=key; order.innerHTML=customer?`${sushiSvg(customer.type)}<strong>×${customer.remaining}</strong>`:'<span class="thanks">See you soon! ♡</span>'; guest.dataset.type=customer?.type ?? ''; guest.dataset.remaining=String(customer?.remaining ?? 0); guest.setAttribute('aria-label',customer?`Guest ${i+1} wants ${customer.remaining} ${names[customer.type]}`:`Guest ${i+1} seat is waiting`); guest.classList.toggle('empty',!customer); if(changed&&customer) { avatar.innerHTML=avatarSvg(customer.id%6); if(!matchMedia('(prefers-reduced-motion: reduce)').matches) avatar.animate([{transform:'translateY(12px)',opacity:0},{transform:'translateY(0)',opacity:1}],{duration:400,easing:'ease-out'}); } } });
+ state.seats.forEach((seat,i)=> { const {node:guest,order,avatar}=guests[i]; const customer=seat.customer; const key=customer?`${customer.id}-${customer.type}-${customer.remaining}`:'empty'; if(guestKeys[i]!==key) { const changed=guestKeys[i]?.split('-')[0]!==key.split('-')[0]; guestKeys[i]=key; order.innerHTML=customer?`${sushiSvg(customer.type)}<strong>×${customer.remaining}</strong>`:'<span class="thanks">See you soon! ♡</span>'; guest.dataset.type=customer?.type ?? ''; guest.dataset.remaining=String(customer?.remaining ?? 0); guest.setAttribute('aria-label',customer?`Guest ${i+1} wants ${customer.remaining} ${names[customer.type]}`:`Guest ${i+1} seat is waiting`); guest.classList.toggle('empty',!customer); if(changed&&customer) { animations.arrival(i,avatarSvg(customer.id%6,'waiting')); } } });
  let structureChanged=false;
  activePlateIds.clear();
  for(const plate of state.plates) {
@@ -138,6 +142,7 @@ function render() {
    node.innerHTML=sushiSvg(plate.type);
    el('plates').append(node);
    plates.set(plate.id,node);
+   animations.plateAdded(node);
    structureChanged=true;
   }
   if(node.dataset.slot!==String(plate.slot)) {
@@ -154,14 +159,14 @@ function render() {
   slots.forEach((node,i)=>setClass(node,'occupied',occupiedSlots.has(i)));
  }
  updateMotion();
- state.events.filter(event=>event.id>lastEvent).forEach(event=> { lastEvent=event.id; if(event.kind==='serve'||event.kind==='complete') { const effect=document.createElement('span'); effect.className=`float-point float-${event.station}`; effect.textContent=event.kind==='complete'?'Thank you! ♡':'Delicious ♡'; el('effects').append(effect); setTimeout(()=>effect.remove(),1300); if(event.kind==='complete') {tone(800); el('announcement').textContent=`Happy guest! ${state.served} guests served.`;} } });
+ state.events.filter(event=>event.id>lastEvent).forEach(event=> { lastEvent=event.id; if(event.kind==='serve' && event.station!==undefined) animations.serve(event.station); if(event.kind==='complete' && event.station!==undefined) { animations.complete(event.station,state.served); tone(800); el('announcement').textContent=`Happy guest! ${state.served} guests served.`; } });
  if(state.served>best){ best=state.served; save('sushi-loop-guests-best',String(best)); setText(el('best'),String(best)); }
  recordRun();
  if(lastPhase!==state.phase){lastPhase=state.phase; showOverlay();}
  syncAnimation();
 }
 let runId = ''; let runCreatedAt = 0; let recordedServed = -1; let recordedDelivered = -1; let recordedEnd = false;
-function newRun() { runId=globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`; runCreatedAt=Date.now(); recordedServed=-1;recordedDelivered=-1;recordedEnd=false;lastEvent=0;el('effects').replaceChildren(); }
+function newRun() { runId=globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`; runCreatedAt=Date.now(); recordedServed=-1;recordedDelivered=-1;recordedEnd=false;lastEvent=0;guestKeys.length=0;animations.reset(); }
 function rankingMarkup():string { const entries=readRanking(); return entries.length?`<ol class="ranking-list">${entries.map((entry,i)=>`<li><b>${i+1}</b><strong>${entry.served} ${entry.served===1?'guest':'guests'}</strong><span>${entry.delivered} pieces enjoyed</span></li>`).join('')}</ol>`:'<p class="rules-note">Your first lovely run belongs here.<br>Rankings stay on this device.</p>'; }
 function recordRun() { if(state.phase==='ready' || (state.served===0 && state.phase!=='lost')) return; if(state.served!==recordedServed || state.delivered!==recordedDelivered || (state.phase==='lost'&&!recordedEnd)) {recordResult({id:runId,served:state.served,delivered:state.delivered,createdAt:runCreatedAt});recordedServed=state.served;recordedDelivered=state.delivered;recordedEnd=state.phase==='lost';} }
 let animationFrame:number | null=null;
