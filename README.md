@@ -45,4 +45,4 @@ npm run test:e2e
 
 ## Deployment
 
-GitHub Actions tests and builds pushes to `main`, runs Chromium smoke tests, and deploys to GitHub Pages. Select **GitHub Actions** as the repository's Pages source once. See [deployment instructions](docs/deployment.md) for setup, offline verification, updates, and custom paths. The default build path is `/sushi/`; use `BASE_PATH=/ npm run build` for a domain root.
+GitHub Actions tests and builds pushes to `main`, runs Chromium smoke tests, and deploys to GitHub Pages. Select **GitHub Actions** as the repository's Pages source once. The workflow reads the configured Pages URL to build and test at `/` for `sushi.zen.dev.br`, or `/sushi/` for the GitHub project URL. See [deployment instructions](docs/deployment.md) for setup, DNS, offline verification, updates, and custom paths. Local builds default to `/sushi/`; verify a domain root with `BASE_PATH=/ npm run build` followed by `BASE_PATH=/ npm run test:e2e`.

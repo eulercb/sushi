@@ -1,5 +1,8 @@
 import { defineConfig } from '@playwright/test';
 
+const basePath = `/${(process.env.BASE_PATH || '/sushi/').split('/').filter(Boolean).join('/')}`;
+const baseURL = `http://127.0.0.1:4173${basePath === '/' ? '/' : `${basePath}/`}`;
+
 export default defineConfig({
   testDir: './tests',
   fullyParallel: true,
@@ -7,7 +10,7 @@ export default defineConfig({
   retries: process.env.CI ? 2 : 0,
   reporter: process.env.CI ? 'github' : 'list',
   use: {
-    baseURL: 'http://127.0.0.1:4173/sushi/',
+    baseURL,
     viewport: { width: 390, height: 844 },
     isMobile: true,
     hasTouch: true,
@@ -18,7 +21,7 @@ export default defineConfig({
   },
   webServer: {
     command: 'npm run preview -- --port 4173 --strictPort',
-    url: 'http://127.0.0.1:4173/sushi/',
+    url: baseURL,
     reuseExistingServer: !process.env.CI,
   },
 });

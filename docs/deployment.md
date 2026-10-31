@@ -8,9 +8,17 @@ In the repository's **Settings → Pages → Build and deployment**, select **Gi
 
 Push to `main` or run the workflow manually, then open the deployment URL displayed in Actions. For a repository named `sushi`, the site is `https://OWNER.github.io/sushi/`. An unsuccessful configure-pages step usually means Pages has not yet been enabled with GitHub Actions as the source.
 
+## Custom domain
+
+The repository's Pages custom domain is `sushi.zen.dev.br`. At your DNS provider, the subdomain record should be a **CNAME** with name `sushi` and target `eulercb.github.io`, without a repository name or URL path. In **Settings → Pages**, the custom domain is already set; keep HTTPS enabled once GitHub has issued the certificate. An Actions deployment does not require a `CNAME` file in the repository.
+
+The workflow reads the site's base path from `actions/configure-pages` before building. It uses `/` for a custom domain and `/sushi/` for the default GitHub project URL, and runs the browser tests with the same path. Changing the hostname changes the browser origin: saved rankings and installed apps do not automatically migrate from the old hostname.
+
 ## Local production verification
 
 Run `npm ci`, `npm test`, `npm run build`, and `npm run preview`. The CI workflow also installs Chromium and runs `npm run test:e2e` against the production bundle. Open `http://localhost:4173/sushi/`. The development server intentionally does not register a service worker. To publish at a domain root, build with `BASE_PATH=/ npm run build`; a different project path can be supplied the same way, including leading and trailing slashes.
+
+To verify the custom-domain root locally, run `BASE_PATH=/ npm run build` followed by `BASE_PATH=/ npm run test:e2e`. For manual inspection, run `BASE_PATH=/ npm run preview` and open `http://localhost:4173/`.
 
 Open the production page online once, wait for the service worker to finish installing, and reload it. In browser DevTools, switch the Network panel to Offline and reload again. The game, icons, help and settings should remain available. Restore networking before checking a new release. Service workers require HTTPS, except on localhost.
 
