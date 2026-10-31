@@ -358,7 +358,9 @@ for (const reason of ['visibility', 'blur'] as const) {
 test('help describes unhurried play and a fresh run clears the belt', async ({ page }) => {
   await page.goto('./');
   await page.locator('#modal-help').tap();
-  await expect(page.getByRole('dialog')).toContainText('guests will wait');
+  await expect(page.getByRole('dialog')).toContainText('Guests will wait');
+  await expect(page.getByRole('dialog')).toContainText('A full belt keeps rolling if a plate matches a guest');
+  await expect(page.getByRole('dialog')).toContainText('If no plates match, the run ends');
   await expect(page.getByRole('dialog')).toContainText('Hold keys 1–5');
   await page.locator('#primary').tap();
   await page.locator('#primary').tap();
@@ -401,8 +403,8 @@ test('real completed orders appear in local rankings after reload', async ({ pag
   await expect(page.locator('.ranking-list li').first()).toContainText(`${served} ${served === 1 ? 'guest' : 'guests'}`);
 });
 
-test('a full forty-slot belt ends the run through ordinary lane input', async ({ page }) => {
-  test.setTimeout(90000);
+test('a full belt with no matching plates ends the run through ordinary lane input', async ({ page }) => {
+  test.setTimeout(150000);
   await start(page);
   for (let step = 0; step < 320 && !(await page.getByRole('dialog').isVisible()); step++) {
     const requests = await page.locator('.guest').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-type')));
@@ -411,7 +413,10 @@ test('a full forty-slot belt ends the run through ordinary lane input', async ({
     await page.keyboard.press(String((lane < 0 ? 0 : lane) + 1));
     await page.clock.runFor(550);
   }
-  await expect(page.getByRole('dialog')).toContainText('A full belt');
+  await expect(page.getByRole('dialog')).toContainText('no plates match');
+  const requests = await page.locator('.guest').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-type')));
+  const plates = await page.locator('.plate').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-type')));
+  expect(plates.every(type => !requests.includes(type))).toBe(true);
   await expect(page.locator('#capacity')).toHaveText('40 / 40');
   await expect(page.locator('.plate')).toHaveCount(40);
   for (const width of [390, 320]) {

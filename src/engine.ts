@@ -49,6 +49,10 @@ function entrySlot(s: GameState): number { return ((Math.round(-s.beltPhase * RU
 /** Each accepted request reserves one belt space and its exact queue front. */
 export function canLaunch(s: GameState): boolean { return s.phase === 'playing' && s.plates.length + s.pending.length < RULES.capacity; }
 export function canRepeatLaunch(s: GameState): boolean { return canLaunch(s) && s.pending.length === 0; }
+function checkBlockedBelt(s: GameState) {
+  if (s.plates.length >= RULES.capacity && !s.seats.some(seat =>
+    seat.customer && s.plates.some(plate => plate.type === seat.customer!.type))) s.phase = 'lost';
+}
 function insert(s: GameState, request: LaunchRequest) {
   const slot = entrySlot(s);
   const chain: Plate[] = [];
@@ -67,7 +71,7 @@ function insert(s: GameState, request: LaunchRequest) {
   const position = wrap(s.beltPhase + slot / RULES.capacity);
   s.plates.push({ id: s.nextId++, type: request.type, slot, position, distance: position });
   event(s, { kind: 'launch', type: request.type });
-  if (s.plates.length === RULES.capacity) s.phase = 'lost';
+  checkBlockedBelt(s);
 }
 export function launchPlate(state: GameState, lane: number): GameState {
   if (!Number.isInteger(lane) || !state.queues[lane] || !canLaunch(state)) return state;
@@ -110,6 +114,7 @@ function step(s: GameState, dt: number) {
     }
     return true;
   });
+  checkBlockedBelt(s);
 }
 /** Subdivision preserves station crossings and customer replacement for large ticks. */
 export function tick(state: GameState, seconds: number): GameState {

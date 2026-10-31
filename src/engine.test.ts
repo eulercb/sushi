@@ -204,6 +204,8 @@ describe('cozy sushi service', () => {
   });
   it('bounds accepted requests by remaining capacity and loses only after insertion', () => {
     let s = noMatch();
+    // An empty seat's future replacement cannot make this belt recoverable.
+    s.seats[0] = { customer: null, returnsIn: RULES.replacementDelay };
     expect(C).toBe(40);
     for (let i = 0; i < C; i++) { s.queues[0][0] = 'salmon'; s = launchPlate(s, 0); }
     expect(s.plates).toHaveLength(1);
@@ -217,7 +219,40 @@ describe('cozy sushi service', () => {
     expect(new Set(s.plates.map(p => p.slot)).size).toBe(C);
     expect(RULES.repeatInterval).toBeGreaterThan(RULES.loadingDuration);
   });
-  it('fills every spaced slot and ends immediately at capacity', () => { let s = noMatch(); for (let i = 0; i < RULES.capacity; i++) { s.queues[0][0] = 'salmon'; s = launchPlate(s, 0); if (i < RULES.capacity - 1) s = tick(s, 1 / RULES.capacity / RULES.speed); } expect(s.plates).toHaveLength(RULES.capacity); expect(new Set(s.plates.map(p => p.slot)).size).toBe(RULES.capacity); expect(s.phase).toBe('lost'); expect(launchPlate(s, 0)).toBe(s); expect(tick(s, 20)).toBe(s); const positions = s.plates.map(p => p.position).sort((a,b) => a-b); for (let i = 0; i < positions.length; i++) expect((positions[(i+1)%RULES.capacity] - positions[i] + 1) % 1).toBeCloseTo(1/RULES.capacity); });
+  it('keeps a full belt moving when a current guest can eat a plate, then permits another launch', () => {
+    let s = noMatch();
+    s.seats[0].customer!.type = 'salmon';
+    for (let i = 0; i < C; i++) { s.queues[0][0] = 'salmon'; s = launchPlate(s, 0); }
+    expect(canLaunch(s)).toBe(false);
+    s = tick(s, RULES.loadingDuration * (C - 1));
+    expect(s.phase).toBe('playing');
+    expect(s.plates).toHaveLength(C);
+    expect(s.pending).toHaveLength(0);
+    expect(launchPlate(s, 0)).toBe(s);
+    s = tick(s, 2);
+    expect(s.delivered).toBeGreaterThan(0);
+    expect(s.plates.length).toBeLessThan(C);
+    expect(canLaunch(s)).toBe(true);
+  });
+  it('ends after a matching guest leaves only if the belt fills again without a match', () => {
+    let s = noMatch();
+    s.seats[0].customer!.type = 'maki';
+    s.seats[0].customer!.remaining = 1;
+    s.queues[0][0] = 'maki';
+    s = launchPlate(s, 0);
+    for (let i = 1; i < C; i++) { s.queues[0][0] = 'salmon'; s = launchPlate(s, 0); }
+    s = tick(s, RULES.loadingDuration * (C - 1));
+    expect(s.phase).toBe('playing');
+    s = tick(s, 1.1);
+    expect(s.served).toBe(1);
+    expect(s.plates).toHaveLength(C - 1);
+    expect(s.phase).toBe('playing');
+    s.queues[0][0] = 'salmon';
+    s = launchPlate(s, 0);
+    if (s.pending.length) s = tick(s, RULES.loadingDuration);
+    expect(s.phase).toBe('lost');
+  });
+  it('fills every spaced slot and ends when no plate matches', () => { let s = noMatch(); for (let i = 0; i < RULES.capacity; i++) { s.queues[0][0] = 'salmon'; s = launchPlate(s, 0); if (i < RULES.capacity - 1) s = tick(s, 1 / RULES.capacity / RULES.speed); } expect(s.plates).toHaveLength(RULES.capacity); expect(new Set(s.plates.map(p => p.slot)).size).toBe(RULES.capacity); expect(s.phase).toBe('lost'); expect(launchPlate(s, 0)).toBe(s); expect(tick(s, 20)).toBe(s); const positions = s.plates.map(p => p.position).sort((a,b) => a-b); for (let i = 0; i < positions.length; i++) expect((positions[(i+1)%RULES.capacity] - positions[i] + 1) % 1).toBeCloseTo(1/RULES.capacity); });
   it('feeds matching requests, frees their slot and counts completed customers only', () => { let s = noMatch(); s.seats[0].customer!.type = 'salmon'; s.seats[0].customer!.remaining = 2; s = tick(launchPlate(s, 0), 1.7); expect(s.plates).toHaveLength(0); expect(s.delivered).toBe(1); expect(s.served).toBe(0); const guest = s.seats[0].customer!; guest.remaining = 1; const id = guest.id; s = tick(launchPlate(s, 0), 14); expect(s.served).toBeGreaterThanOrEqual(1); expect(s.seats[0].customer?.id).not.toBe(id); expect(s.events.some(e => e.kind === 'complete')).toBe(true); });
   it('replaces completed customers after a gentle delay with available orders', () => { let s = noMatch(); s.seats[0].customer!.type = 'salmon'; s.seats[0].customer!.remaining = 1; s = tick(launchPlate(s, 0), 1.7); expect(s.served).toBe(1); expect(s.seats[0].customer).toBeNull(); s = tick(s, 1.7); const guest = s.seats[0].customer!; expect(guest.quantity).toBeGreaterThanOrEqual(RULES.orderMin); expect(guest.quantity).toBeLessThanOrEqual(RULES.orderMax); expect(s.queues.flat()).toContain(guest.type); });
   it('freezes ready, paused and lost states and restarts deterministically', () => { const s = pauseGame(tick(launchPlate(playing(), 0), 5)); expect(tick(s, 10)).toBe(s); expect(launchPlate(s, 1)).toBe(s); expect(tick(createGame(), 10).elapsed).toBe(0); expect(tick(resumeGame(s), 1).elapsed).toBeCloseTo(6); expect(restartGame(s)).toEqual(playing()); });
