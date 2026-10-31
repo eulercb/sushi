@@ -53,7 +53,7 @@ async function profile(browser, url, scenario) {
       // First order starts immediately; the remaining orders use the real queue.
       for (let i = 0; i < 35; i++) await page.keyboard.press(String(i % 5 + 1));
       await page.waitForFunction(
-        () => document.querySelectorAll('.plate').length === 35,
+        () => !document.querySelector('.launch-gate.loading'),
         undefined,
         { timeout: 15_000 },
       );

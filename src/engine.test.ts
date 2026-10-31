@@ -155,21 +155,19 @@ describe('cozy sushi service', () => {
       expect(returned.seats[0].customer!.type === 'tuna').toBe(expected);
     }
   });
-  it('accepts an occupied gate tap, pauses travel, and inserts after making room', () => {
+  it('moves continuously while an occupied gate waits for a free slot', () => {
     const first = launchPlate(noMatch(), 0);
     const queued = launchPlate(first, 1);
-    expect(canLaunch(first)).toBe(true);
     expect(canRepeatLaunch(queued)).toBe(false);
     expect(queued.pending).toHaveLength(1);
-    expect(queued.plates).toHaveLength(1);
-    const waiting = tick(queued, RULES.loadingDuration / 2);
-    expect(waiting.beltPhase).toBe(first.beltPhase);
-    expect(waiting.plates).toEqual(first.plates);
-    const loaded = tick(waiting, RULES.loadingDuration / 2);
+    const waiting = tick(queued, .05);
+    expect(waiting.beltPhase).toBeGreaterThan(first.beltPhase);
+    expect(waiting.plates[0].slot).toBe(first.plates[0].slot);
+    expect(waiting.plates[0].distance).toBeGreaterThan(first.plates[0].distance);
+    const loaded = tick(waiting, .3);
     expect(loaded.pending).toHaveLength(0);
-    expect(loaded.plates.map(p => p.slot)).toEqual([C - 1, 0]);
-    expect(loaded.plates[0].id).toBe(first.plates[0].id);
-    expect(loaded.delivered).toBe(0);
+    expect(loaded.plates[0].slot).toBe(first.plates[0].slot);
+    expect(new Set(loaded.plates.map(p => p.slot)).size).toBe(2);
   });
   it('reserves rapid choices in FIFO order and consumes each queue front once', () => {
     let s = noMatch();
@@ -178,114 +176,70 @@ describe('cozy sushi service', () => {
     s = launchPlate(s, 1); s = launchPlate(s, 1); s = launchPlate(s, 2);
     expect(s.pending.map(p => [p.lane, p.type])).toEqual([[1, 'maki'], [1, 'shrimp'], [2, 'salmon']]);
     const queue = [...s.queues[1]];
-    s = tick(s, RULES.loadingDuration * 3);
+    s = tick(s, 1);
     expect(s.plates.map(p => p.type)).toEqual(['salmon', 'maki', 'shrimp', 'salmon']);
-    expect(s.plates.map(p => p.slot)).toEqual([C - 3, C - 2, C - 1, 0]);
+    expect(new Set(s.plates.map(p => p.slot)).size).toBe(4);
     expect(s.queues[1]).toEqual(queue);
   });
-  it('shifts a wrapping chain into the nearest gap without phantom service', () => {
+  it('keeps serving and replacing customers during a backlog without shifting plates', () => {
     let s = noMatch();
-    s.beltPhase = 1 / RULES.capacity;
-    s.plates = [C - 1, C - 2, C - 3, 4].map((slot, i) => ({ id: 100+i, type: 'salmon', slot, position: (s.beltPhase+slot/RULES.capacity)%1, distance: (s.beltPhase+slot/RULES.capacity)%1 }));
-    s.seats.forEach(seat => { seat.customer!.type = 'salmon'; });
-    const before = structuredClone(s.plates);
-    s = tick(launchPlate(s, 0), RULES.loadingDuration);
-    expect(s.plates.map(p => p.slot)).toEqual([C - 2, C - 3, C - 4, 4, C - 1]);
-    expect(s.delivered).toBe(0);
-    for (let i = 0; i < 3; i++) expect(s.plates[i].distance).toBeCloseTo(before[i].distance-1/RULES.capacity);
-    expect(tick(s, .001).delivered).toBe(0);
-    expect(new Set(s.plates.map(p => p.slot)).size).toBe(s.plates.length);
-  });
-  it('backs through zero consistently and serves the next forward station crossing once', () => {
-    let s = noMatch();
-    s.beltPhase = .25 / C;
-    s.plates = [{id: 100, type: 'salmon', slot: 0, position: s.beltPhase, distance: s.beltPhase}];
     s.seats[0].customer!.type = 'salmon';
-    s = tick(launchPlate(s, 0), RULES.loadingDuration);
-    const backed = s.plates.find(p => p.id === 100)!;
-    expect(backed.distance).toBeLessThan(0);
-    expect(backed.position).toBeCloseTo(1 + backed.distance);
-    // The new plate passes first; the backed-up plate then gets its own crossing.
-    s = tick(s, (0.125 - backed.distance) / RULES.speed + .001);
-    expect(s.delivered).toBe(2);
-    expect(s.plates).toHaveLength(0);
+    s.seats[0].customer!.remaining = 1;
+    for (let i = 0; i < 20; i++) { s.queues[0][0] = 'salmon'; s = launchPlate(s, 0); }
+    const slot = s.plates[0].slot;
+    s = tick(s, 1);
+    expect(s.pending.length).toBeGreaterThan(0);
+    expect(s.plates[0].slot).toBe(slot);
+    s = tick(s, .3);
+    expect(s.delivered).toBeGreaterThan(0);
+    expect(s.pending.length).toBeGreaterThan(0);
+    s = tick(s, 1.7);
+    expect(s.seats[0].customer).not.toBeNull();
   });
   it('freezes pending insertion on pause and clears requests on restart', () => {
     const s = launchPlate(launchPlate(noMatch(), 0), 1);
-    const paused = pauseGame(tick(s, .1));
+    const paused = pauseGame(tick(s, .05));
     expect(tick(paused, 20)).toBe(paused);
-    expect(tick(resumeGame(paused), .1).plates).toHaveLength(2);
+    expect(tick(resumeGame(paused), .3).plates).toHaveLength(2);
     expect(restartGame(paused).pending).toEqual([]);
-    expect(restartGame(paused).loadingRemaining).toBe(0);
   });
-  it('bounds accepted requests by remaining capacity and loses only after insertion', () => {
+  it('bounds reservations by capacity and fills unique slots before losing', () => {
     let s = noMatch();
-    // An empty seat's future replacement cannot make this belt recoverable.
-    s.seats[0] = { customer: null, returnsIn: RULES.replacementDelay };
-    expect(C).toBe(40);
     for (let i = 0; i < C; i++) { s.queues[0][0] = 'salmon'; s = launchPlate(s, 0); }
     expect(s.plates).toHaveLength(1);
     expect(s.pending).toHaveLength(C - 1);
-    expect(s.phase).toBe('playing');
+    expect(canLaunch(s)).toBe(false);
     expect(launchPlate(s, 1)).toBe(s);
-    s = tick(s, RULES.loadingDuration * (C - 1));
+    s = tick(s, 11);
     expect(s.phase).toBe('lost');
     expect(s.plates).toHaveLength(C);
     expect(s.pending).toHaveLength(0);
     expect(new Set(s.plates.map(p => p.slot)).size).toBe(C);
-    expect(RULES.repeatInterval).toBeGreaterThan(RULES.loadingDuration);
   });
-  it('keeps a full belt moving when a current guest can eat a plate, then permits another launch', () => {
-    let s = noMatch();
-    s.seats[0].customer!.type = 'salmon';
-    for (let i = 0; i < C; i++) { s.queues[0][0] = 'salmon'; s = launchPlate(s, 0); }
-    expect(canLaunch(s)).toBe(false);
-    s = tick(s, RULES.loadingDuration * (C - 1));
-    expect(s.phase).toBe('playing');
-    expect(s.plates).toHaveLength(C);
-    expect(s.pending).toHaveLength(0);
-    expect(launchPlate(s, 0)).toBe(s);
-    s = tick(s, 2);
-    expect(s.delivered).toBeGreaterThan(0);
-    expect(s.plates.length).toBeLessThan(C);
-    expect(canLaunch(s)).toBe(true);
-  });
-  it('keeps a full belt alive when only its last inserted plate matches any current guest', () => {
-    for (const matchingSeat of [0, 1, 2, 3]) {
+  it('continues service with a full belt when the last inserted plate matches any seat', () => {
+    for (let seat = 0; seat < 4; seat++) {
       let s = noMatch();
-      s.seats[matchingSeat].customer!.type = 'maki';
-      for (let i = 0; i < C; i++) {
-        s.queues[0][0] = i === C - 1 ? 'maki' : 'salmon';
-        s = launchPlate(s, 0);
-      }
-      s = tick(s, RULES.loadingDuration * (C - 1));
+      s.seats[seat].customer!.type = 'maki';
+      s.plates = Array.from({length: C - 1}, (_, slot) => ({id: 100 + slot, type: 'salmon' as const, slot, position: slot / C, distance: slot / C}));
+      s.beltPhase = 1 / C;
+      s.plates.forEach(p => { p.position = (s.beltPhase + p.slot / C) % 1; p.distance = p.position; });
+      s.queues[0][0] = 'maki';
+      s = launchPlate(s, 0);
       expect(s.plates).toHaveLength(C);
-      expect(s.plates.filter(plate => plate.type === 'maki')).toHaveLength(1);
       expect(s.phase).toBe('playing');
+      expect(canLaunch(s)).toBe(false);
       s = tick(s, 10);
-      expect(s.phase).toBe('playing');
       expect(s.delivered).toBe(1);
-      expect(s.plates).toHaveLength(C - 1);
       expect(canLaunch(s)).toBe(true);
     }
   });
-  it('ends after a matching guest leaves only if the belt fills again without a match', () => {
+  it('does not count an empty seat’s future replacement as a match for a full belt', () => {
     let s = noMatch();
-    s.seats[0].customer!.type = 'maki';
-    s.seats[0].customer!.remaining = 1;
-    s.queues[0][0] = 'maki';
-    s = launchPlate(s, 0);
-    for (let i = 1; i < C; i++) { s.queues[0][0] = 'salmon'; s = launchPlate(s, 0); }
-    s = tick(s, RULES.loadingDuration * (C - 1));
-    expect(s.phase).toBe('playing');
-    s = tick(s, 1.1);
-    expect(s.served).toBe(1);
-    expect(s.plates).toHaveLength(C - 1);
-    expect(s.phase).toBe('playing');
-    s.queues[0][0] = 'salmon';
-    s = launchPlate(s, 0);
-    if (s.pending.length) s = tick(s, RULES.loadingDuration);
+    s.seats[0] = { customer: null, returnsIn: 1 };
+    s.plates = Array.from({length: C}, (_, slot) => ({id: 100 + slot, type: 'salmon' as const, slot, position: slot / C, distance: slot / C}));
+    s = tick(s, .05);
     expect(s.phase).toBe('lost');
+    expect(s.seats[0].customer).toBeNull();
   });
   it('fills every spaced slot and ends when no plate matches', () => { let s = noMatch(); for (let i = 0; i < RULES.capacity; i++) { s.queues[0][0] = 'salmon'; s = launchPlate(s, 0); if (i < RULES.capacity - 1) s = tick(s, 1 / RULES.capacity / RULES.speed); } expect(s.plates).toHaveLength(RULES.capacity); expect(new Set(s.plates.map(p => p.slot)).size).toBe(RULES.capacity); expect(s.phase).toBe('lost'); expect(launchPlate(s, 0)).toBe(s); expect(tick(s, 20)).toBe(s); const positions = s.plates.map(p => p.position).sort((a,b) => a-b); for (let i = 0; i < positions.length; i++) expect((positions[(i+1)%RULES.capacity] - positions[i] + 1) % 1).toBeCloseTo(1/RULES.capacity); });
   it('feeds matching requests, frees their slot and counts completed customers only', () => { let s = noMatch(); s.seats[0].customer!.type = 'salmon'; s.seats[0].customer!.remaining = 2; s = tick(launchPlate(s, 0), 1.7); expect(s.plates).toHaveLength(0); expect(s.delivered).toBe(1); expect(s.served).toBe(0); const guest = s.seats[0].customer!; guest.remaining = 1; const id = guest.id; s = tick(launchPlate(s, 0), 14); expect(s.served).toBeGreaterThanOrEqual(1); expect(s.seats[0].customer?.id).not.toBe(id); expect(s.events.some(e => e.kind === 'complete')).toBe(true); });

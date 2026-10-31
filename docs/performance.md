@@ -75,3 +75,5 @@ node scripts/profile-performance.mjs http://127.0.0.1:4173/ --output /tmp/sushi-
 Set `PLAYWRIGHT_CHROMIUM_EXECUTABLE=/usr/bin/chromium` to use this cloud environment's installed Chromium. Run each revision sequentially, with the same browser and no competing browser workloads. Compare the two active samples rather than a single best result. The benchmark is a development tool, not a timing budget in CI.
 
 Regression tests cover idle-loop suspension, clone-free motion, unchanged HUD mutations, correct capacity-bar fill, and the existing gameplay, resize, touch, ranking, and offline behavior.
+
+The samples above are historical. Continuous loading lets guests eat while the initial requests are still entering the belt, so the same preparation can now yield different plate counts. Compare future measurements at equivalent occupancy.

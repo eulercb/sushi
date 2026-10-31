@@ -2,9 +2,9 @@ import { expect, test, type Page } from '@playwright/test';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 
-async function start(page: Page) {
-  await page.clock.install({ time: new Date('2026-01-01T12:00:00Z') });
-  await page.clock.setFixedTime(new Date('2026-01-01T12:00:00Z'));
+async function start(page: Page, time = '2026-01-01T12:00:00Z') {
+  await page.clock.install({ time: new Date(time) });
+  await page.clock.setFixedTime(new Date(time));
   await page.goto('./');
   await expect(page.getByRole('dialog')).toBeVisible();
   await page.locator('#primary').tap();
@@ -88,38 +88,24 @@ test('quiet belt motion updates transforms without cloning state or rewriting th
 test('fractional progress percentages do not rewrite an unchanged occupied HUD', async ({ page }) => {
   await start(page);
   await page.clock.pauseAt(new Date('2026-01-01T12:00:01Z'));
-  // Accepted queue inputs keep loading active, without moving plates past guests.
-  for (let request = 0; request < 23; request++) await page.keyboard.press('1');
-  await page.clock.runFor(4250);
-  await expect(page.locator('#capacity')).toHaveText('22 / 40');
-  await expect(page.locator('.plate')).toHaveCount(22);
-  await expect(page.locator('.launch-gate')).toHaveClass(/loading/);
+  await page.keyboard.press('1');
+  await expect(page.locator('#capacity')).toHaveText('1 / 40');
   await expect.poll(() => page.locator('#progress').evaluate(node => {
     const bar = node.getBoundingClientRect();
     return bar.width / node.parentElement!.getBoundingClientRect().width;
-  })).toBeCloseTo(22 / 40, 2);
+  })).toBeCloseTo(1 / 40, 2);
   await page.evaluate(() => {
     document.documentElement.dataset.occupiedHudMutations = '0';
     new MutationObserver(records => {
       document.documentElement.dataset.occupiedHudMutations = String(Number(document.documentElement.dataset.occupiedHudMutations) + records.length);
     }).observe(document.querySelector('.hud')!, { subtree: true, childList: true, characterData: true, attributes: true });
   });
-  await page.clock.runFor(80);
-  await expect(page.locator('#capacity')).toHaveText('22 / 40');
-  expect(await page.evaluate(() => Number(document.documentElement.dataset.occupiedHudMutations))).toBe(0);
-  await page.clock.runFor(100);
-  await expect(page.locator('#capacity')).toHaveText('23 / 40');
-  await expect(page.locator('.plate')).toHaveCount(23);
-  await expect(page.locator('.launch-gate')).not.toHaveClass(/loading/);
-  // Allow the observer's insertion-update delivery before measuring quiet motion.
-  await page.evaluate(() => { document.documentElement.dataset.occupiedHudMutations = '0'; });
   const occupant = page.locator('.plate').first();
-  await expect(occupant).toBeVisible();
   const plate = (await occupant.elementHandle())!;
   const transform = await plate.getAttribute('style');
   expect(transform).toBeTruthy();
   await page.clock.runFor(80);
-  await expect(page.locator('#capacity')).toHaveText('23 / 40');
+  await expect(page.locator('#capacity')).toHaveText('1 / 40');
   expect(await plate.evaluate(node => node.isConnected)).toBe(true);
   expect(await plate.getAttribute('style')).not.toBe(transform);
   expect(await page.evaluate(() => Number(document.documentElement.dataset.occupiedHudMutations))).toBe(0);
@@ -174,7 +160,7 @@ test('tap advances the queue, preserves controls, and fixed belt slots never ove
   expect(errors).toEqual([]);
 });
 
-test('rapid taps reserve exact foods, pause the belt, and load FIFO into separate slots', async ({ page }) => {
+test('rapid taps reserve exact foods while the belt moves, and load FIFO into separate slots', async ({ page }) => {
   await start(page);
   await page.clock.pauseAt(new Date('2026-01-01T12:00:01Z'));
   const lanes = page.locator('.lane');
@@ -190,30 +176,48 @@ test('rapid taps reserve exact foods, pause the belt, and load FIFO into separat
   await expect(lanes.nth(0)).toHaveAttribute('data-type', choices[0].next!);
   await expect(lanes.nth(1)).toHaveAttribute('data-type', choices[1].next!);
   await expect(page.locator('.launch-gate')).toHaveClass(/loading/);
-  await expect(page.locator('#status')).toContainText('Making room');
-  const frozenSlots = await page.locator('.slot').evaluateAll(nodes => nodes.map(node => node.getAttribute('style')));
+  await expect(page.locator('#status')).toContainText('belt keeps rolling');
+  const movingSlots = await page.locator('.slot').evaluateAll(nodes => nodes.map(node => node.getAttribute('style')));
   await page.clock.runFor(100);
-  expect(await page.locator('.slot').evaluateAll(nodes => nodes.map(node => node.getAttribute('style')))).toEqual(frozenSlots);
-  await expect(page.locator('.plate')).toHaveCount(1);
+  expect(await page.locator('.slot').evaluateAll(nodes => nodes.map(node => node.getAttribute('style')))).not.toEqual(movingSlots);
 
   // A third deliberate tap must retain its chosen food while the second is loading.
   await lanes.nth(2).tap();
   await expect(lanes.nth(2)).toHaveAttribute('data-type', choices[2].next!);
   const reservedQueues = await queues(page);
-  await page.clock.runFor(150);
-  await expect(page.locator('.plate')).toHaveCount(2);
-  expect(await page.locator('.plate').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-type')))).toEqual(choices.slice(0, 2).map(choice => choice.food));
-  await expect(page.locator('.launch-gate')).toHaveClass(/loading/);
-  await page.clock.runFor(200);
+  await page.clock.runFor(600);
   await expect(page.locator('.plate')).toHaveCount(3);
   await expect(page.locator('.launch-gate')).not.toHaveClass(/loading/);
   const plates = await page.locator('.plate').evaluateAll(nodes => nodes.map(node => ({
     food: node.getAttribute('data-type'), slot: Number(node.getAttribute('data-slot')),
   })));
   expect(plates.map(plate => plate.food)).toEqual(choices.map(choice => choice.food));
-  expect(plates.map(plate => plate.slot)).toEqual([(originalSlot + 38) % 40, (originalSlot + 39) % 40, originalSlot]);
+  expect(plates.map(plate => plate.slot)).toEqual([originalSlot, (originalSlot + 39) % 40, (originalSlot + 38) % 40]);
   expect(new Set(plates.map(plate => plate.slot)).size).toBe(3);
   expect(await queues(page)).toEqual(reservedQueues);
+});
+
+test('a backlog keeps the belt moving and guests eating', async ({ page }) => {
+  await start(page);
+  await page.clock.pauseAt(new Date('2026-01-01T12:00:01Z'));
+  const needs = await page.locator('.guest').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-type')));
+  const fronts = await page.locator('.lane').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-type')));
+  const lane = fronts.findIndex(type => needs.includes(type));
+  expect(lane).toBeGreaterThanOrEqual(0);
+  const remaining = await page.locator('.guest').evaluateAll(nodes => nodes.reduce((sum, node) => sum + Number(node.getAttribute('data-remaining')), 0));
+  await page.keyboard.press(String(lane + 1));
+  for (let i = 0; i < 38; i++) await page.keyboard.press('1');
+  await expect(page.locator('.launch-gate')).toHaveClass(/loading/);
+  const guide = page.locator('.slot:not(.occupied)').first();
+  await expect(guide).toBeVisible();
+  const before = await guide.getAttribute('style');
+  expect(before).toBeTruthy();
+  await page.clock.runFor(8000);
+  await expect(guide).toBeVisible();
+  expect(await guide.getAttribute('style')).not.toBe(before);
+  await expect(page.locator('.launch-gate')).toHaveClass(/loading/);
+  expect(await page.locator('.guest').evaluateAll(nodes => nodes.reduce((sum, node) => sum + Number(node.getAttribute('data-remaining')), 0))).toBeLessThan(remaining);
+  await expectSeparatedPlates(page);
 });
 
 test('holding reserves at most one choice per repeat interval and release finishes accepted loading', async ({ page }) => {
@@ -407,25 +411,25 @@ test('real completed orders appear in local rankings after reload', async ({ pag
 
 test('a full belt with a matching plate keeps rolling until a guest eats', async ({ page }) => {
   test.setTimeout(60000);
-  await start(page);
+  // This seed leaves unmatched choices available for all 39 reservations.
+  await start(page, '2026-01-01T12:00:00.919Z');
   await page.clock.pauseAt(await page.evaluate(() => Date.now()));
   const requests = await page.locator('.guest').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-type')));
-  // Queue forty ordinary taps while the virtual clock is stopped. Choose a
-  // matching front at least once; all reservations then load in order.
-  let matched = false;
-  for (let i = 0; i < 40; i++) {
+  // Reserve 39 unwanted plates, leaving a matching choice at the gate.
+  for (let i = 0; i < 39; i++) {
     const fronts = await page.locator('.lane').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-type')));
-    const match = fronts.findIndex(type => requests.includes(type));
-    const lane = !matched && match >= 0 ? match : i % 5;
-    matched ||= requests.includes(fronts[lane]);
-    await page.locator(`[data-lane="${lane}"]`).tap();
+    const lane = fronts.findIndex(type => !requests.includes(type));
+    expect(lane).toBeGreaterThanOrEqual(0);
+    await page.keyboard.press(String(lane + 1));
   }
-  expect(matched).toBe(true);
-  await page.clock.runFor(8100);
+  const fronts = await page.locator('.lane').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-type')));
+  const lane = fronts.findIndex(type => requests.includes(type));
+  expect(lane).toBeGreaterThanOrEqual(0);
+  await page.keyboard.press(String(lane + 1));
+  await page.clock.runFor(9300);
   await expect(page.locator('#capacity')).toHaveText('40 / 40');
   await expect(page.getByRole('dialog')).toBeHidden();
-  const plates = await page.locator('.plate').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-type')));
-  expect(plates.some(type => requests.includes(type))).toBe(true);
+  await expectSeparatedPlates(page);
   await page.clock.runFor(10000);
   await expect(page.getByRole('dialog')).toBeHidden();
   expect(await page.locator('.plate').count()).toBeLessThan(40);
