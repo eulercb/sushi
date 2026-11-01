@@ -410,24 +410,38 @@ test('real completed orders appear in local rankings after reload', async ({ pag
 });
 
 test('a full belt with a matching plate keeps rolling until a guest eats', async ({ page }) => {
-  test.setTimeout(60000);
-  // This seed leaves unmatched choices available for all 39 reservations.
-  await start(page, '2026-01-01T12:00:00.919Z');
-  await page.clock.pauseAt(await page.evaluate(() => Date.now()));
-  const requests = await page.locator('.guest').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-type')));
-  // Reserve 39 unwanted plates, leaving a matching choice at the gate.
-  for (let i = 0; i < 39; i++) {
+  test.setTimeout(150000);
+  await start(page, '2026-01-01T12:00:00.001Z');
+  // Accumulate unwanted plates through ordinary play, allowing earlier matches
+  // to be eaten. This seed reaches 39 unmatched plates with a matching front.
+  let ready = false;
+  for (let i = 0; i < 600; i++) {
+    const requests = await page.locator('.guest').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-type')));
     const fronts = await page.locator('.lane').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-type')));
+    if (await page.locator('#capacity').textContent() === '39 / 40' &&
+        !(await page.locator('#status').textContent())?.includes('queued') && fronts.some(type => requests.includes(type))) {
+      const plates = await page.locator('.plate').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-type')));
+      if (plates.length === 39 && plates.every(type => !requests.includes(type))) { ready = true; break; }
+    }
     const lane = fronts.findIndex(type => !requests.includes(type));
-    expect(lane).toBeGreaterThanOrEqual(0);
-    await page.keyboard.press(String(lane + 1));
+    await page.keyboard.press(String((lane < 0 ? 0 : lane) + 1));
+    await page.clock.runFor(550);
   }
+  expect(ready).toBe(true);
+  await expect(page.locator('#capacity')).toHaveText('39 / 40');
+  const requests = await page.locator('.guest').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-type')));
+  const plates = await page.locator('.plate').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-type')));
+  expect(plates.every(type => !requests.includes(type))).toBe(true);
   const fronts = await page.locator('.lane').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-type')));
   const lane = fronts.findIndex(type => requests.includes(type));
   expect(lane).toBeGreaterThanOrEqual(0);
   await page.keyboard.press(String(lane + 1));
-  await page.clock.runFor(9300);
+  for (let i = 0; i < 100 && await page.locator('#capacity').textContent() !== '40 / 40'; i++) {
+    await page.clock.runFor(100);
+    await expect(page.getByRole('dialog')).toBeHidden();
+  }
   await expect(page.locator('#capacity')).toHaveText('40 / 40');
+  expect(await page.locator(`.plate[data-type="${fronts[lane]}"]`).count()).toBeGreaterThan(0);
   await expect(page.getByRole('dialog')).toBeHidden();
   await expectSeparatedPlates(page);
   await page.clock.runFor(10000);

@@ -13,6 +13,65 @@ export interface GameState { pending: LaunchRequest[]; phase: Phase; seed: numbe
 const wrap = (value: number) => ((value % 1) + 1) % 1;
 function random(s: GameState): number { s.rng = (Math.imul(s.rng, 1664525) + 1013904223) >>> 0; return s.rng / 4294967296; }
 function sushi(s: GameState): SushiType { return SUSHI_TYPES[Math.floor(random(s) * SUSHI_TYPES.length)]; }
+/** Demand is shared between duplicate orders; extra travelling plates count only once. */
+function unmetDemand(s: GameState): Map<SushiType, number> {
+  const demand = new Map<SushiType, number>();
+  for (const { customer } of s.seats) if (customer) demand.set(customer.type, (demand.get(customer.type) ?? 0) + customer.remaining);
+  for (const { type } of [...s.plates, ...s.pending]) {
+    const remaining = demand.get(type) ?? 0;
+    if (remaining > 0) demand.set(type, remaining - 1);
+  }
+  return demand;
+}
+function hasTravellingMatch(s: GameState): boolean {
+  const wanted = new Set(s.seats.flatMap(({ customer }) => customer && customer.remaining > 0 ? [customer.type] : []));
+  return s.plates.some(({ type }) => wanted.has(type)) || s.pending.some(({ type }) => wanted.has(type));
+}
+/**
+ * Keep one route to service visible. A travelling match will free a space; otherwise
+ * a needed plate must be reachable before the remaining reservations run out.
+ * Preserve fronts; repair a deeper preview for a missing route or a crowded-belt follow-up.
+ */
+function planSupply(s: GameState) {
+  if (hasTravellingMatch(s)) return;
+  const free = RULES.capacity - s.plates.length - s.pending.length;
+  if (free <= 0) return;
+  const needed = [...unmetDemand(s)].filter(([, count]) => count > 0).map(([type]) => type);
+  if (!needed.length) return;
+  const reachable = Math.min(free, RULES.queueDepth, 3);
+  // When the belt is crowded, prepare the next front before the last useful
+  // front is launched. Otherwise repeated short detours can consume the last
+  // free space even when the player always follows the visible route.
+  if (free <= 12 && reachable >= 2) {
+    const fronts = s.queues.flatMap((queue, lane) => needed.includes(queue[0]) ? [lane] : []);
+    if (fronts.length === 1) {
+      const lane = fronts[0];
+      const after = unmetDemand(s);
+      const front = s.queues[lane][0];
+      after.set(front, (after.get(front) ?? 0) - 1);
+      const next = [...after].filter(([, count]) => count > 0).map(([type]) => type);
+      if (next.length && !next.includes(s.queues[lane][1])) s.queues[lane][1] = next[Math.floor(random(s) * next.length)];
+    }
+  }
+  if (s.queues.some(queue => queue.slice(0, reachable).some(type => needed.includes(type)))) return;
+  // Fronts are promises to the player. If only one space remains there is no
+  // safe repair without changing one, so leave that mistake unrecoverable.
+  if (reachable < 2) return;
+  // Randomize the lane and vary the depth, with a deeper exit later in a run.
+  const lane = Math.floor(random(s) * RULES.laneCount);
+  const maxDepth = Math.min(reachable - 1, s.served >= 25 ? 2 : 1);
+  const depth = 1 + Math.floor(random(s) * maxDepth);
+  s.queues[lane][depth] = needed[Math.floor(random(s) * needed.length)];
+}
+function nextSupply(s: GameState): SushiType {
+  const demand = unmetDemand(s);
+  for (const type of s.queues.flat()) {
+    const count = demand.get(type) ?? 0;
+    if (count > 0) demand.set(type, count - 1);
+  }
+  const missing = [...demand].filter(([, count]) => count > 0).map(([type]) => type);
+  return missing.length && random(s) < .7 ? missing[Math.floor(random(s) * missing.length)] : sushi(s);
+}
 function customer(s: GameState): Customer {
   const occupied = new Set(s.seats.flatMap(seat => seat.customer ? [seat.customer.type] : []));
   const queued = [...new Set(s.queues.flat())];
@@ -42,6 +101,7 @@ export function createGame(seed = 42): GameState {
   s.queues = Array.from({ length: RULES.laneCount }, (_, lane) =>
     Array.from({ length: RULES.queueDepth }, (_, depth) => bag[depth * RULES.laneCount + lane]));
   for (const _station of STATIONS) s.seats.push({ customer: customer(s), returnsIn: 0 });
+  planSupply(s);
   return s;
 }
 export function startGame(s: GameState): GameState { return s.phase === 'ready' ? { ...s, phase: 'playing' } : s; }
@@ -68,19 +128,21 @@ export function launchPlate(state: GameState, lane: number): GameState {
   if (!Number.isInteger(lane) || !state.queues[lane] || !canLaunch(state)) return state;
   const s = structuredClone(state);
   const request = { lane, type: s.queues[lane].shift()! };
-  s.queues[lane].push(sushi(s));
   if (!s.pending.length && !s.plates.some(plate => plate.slot === entrySlot(s))) insert(s, request);
   else s.pending.push(request);
+  s.queues[lane].push(nextSupply(s));
+  if (s.phase === 'playing') planSupply(s);
   return s;
 }
 function step(s: GameState, dt: number) {
+  let ordersChanged = false;
   s.elapsed += dt;
   const movement = RULES.speed * dt;
   s.beltPhase = wrap(s.beltPhase + movement);
   for (const seat of s.seats) {
     if (!seat.customer) {
       seat.returnsIn = Math.max(0, seat.returnsIn - dt);
-      if (seat.returnsIn === 0) seat.customer = customer(s);
+      if (seat.returnsIn === 0) { seat.customer = customer(s); ordersChanged = true; }
     }
   }
   s.plates = s.plates.filter(plate => {
@@ -90,6 +152,7 @@ function step(s: GameState, dt: number) {
       const crossing = Math.floor(before - STATIONS[i]) < Math.floor(plate.distance - STATIONS[i]);
       const guest = s.seats[i].customer;
       if (crossing && guest?.type === plate.type) {
+        ordersChanged = true;
         guest.remaining--; s.delivered++;
         event(s, { kind: 'serve', station: i, type: plate.type });
         if (guest.remaining === 0) {
@@ -103,6 +166,7 @@ function step(s: GameState, dt: number) {
     return true;
   });
   checkBlockedBelt(s);
+  if (ordersChanged && s.phase === 'playing') planSupply(s);
 }
 /** Subdivision preserves station crossings and customer replacement for large ticks. */
 export function tick(state: GameState, seconds: number): GameState {

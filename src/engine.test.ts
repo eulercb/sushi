@@ -173,11 +173,12 @@ describe('cozy sushi service', () => {
     let s = noMatch();
     s.queues[1] = ['maki', 'shrimp', 'tamago', 'avocado', 'ikura'];
     s = launchPlate(s, 0);
-    s = launchPlate(s, 1); s = launchPlate(s, 1); s = launchPlate(s, 2);
-    expect(s.pending.map(p => [p.lane, p.type])).toEqual([[1, 'maki'], [1, 'shrimp'], [2, 'salmon']]);
+    const selected: [number, string][] = [];
+    for (const lane of [1, 1, 2]) { selected.push([lane, s.queues[lane][0]]); s = launchPlate(s, lane); }
+    expect(s.pending.map(p => [p.lane, p.type])).toEqual(selected);
     const queue = [...s.queues[1]];
     s = tick(s, 1);
-    expect(s.plates.map(p => p.type)).toEqual(['salmon', 'maki', 'shrimp', 'salmon']);
+    expect(s.plates.map(p => p.type)).toEqual(['salmon', ...selected.map(([, type]) => type)]);
     expect(new Set(s.plates.map(p => p.slot)).size).toBe(4);
     expect(s.queues[1]).toEqual(queue);
   });
