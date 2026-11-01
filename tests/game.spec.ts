@@ -2,11 +2,12 @@ import { expect, test, type Page } from '@playwright/test';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 
-async function start(page: Page, time = '2026-01-01T12:00:00Z') {
+async function start(page: Page, time = '2026-01-01T12:00:00Z', paused = false) {
   await page.clock.install({ time: new Date(time) });
   await page.clock.setFixedTime(new Date(time));
   await page.goto('./');
   await expect(page.getByRole('dialog')).toBeVisible();
+  if (paused) await page.clock.pauseAt(new Date(new Date(time).getTime() + 1000));
   await page.locator('#primary').tap();
   await expect(page.getByRole('dialog')).toBeHidden();
 }
@@ -411,7 +412,8 @@ test('real completed orders appear in local rankings after reload', async ({ pag
 
 test('a full belt with a matching plate keeps rolling until a guest eats', async ({ page }) => {
   test.setTimeout(150000);
-  await start(page, '2026-01-01T12:00:00.001Z');
+  // Start with the clock paused so every belt movement is explicitly advanced.
+  await start(page, '2026-01-01T12:00:00.001Z', true);
   // Accumulate unwanted plates through ordinary play, allowing earlier matches
   // to be eaten. This seed reaches 39 unmatched plates with a matching front.
   let ready = false;
@@ -451,7 +453,7 @@ test('a full belt with a matching plate keeps rolling until a guest eats', async
 
 test('a full belt with no matching plates ends the run through ordinary lane input', async ({ page }) => {
   test.setTimeout(150000);
-  await start(page);
+  await start(page, '2026-01-01T12:00:00Z', true);
   for (let step = 0; step < 320 && !(await page.getByRole('dialog').isVisible()); step++) {
     const requests = await page.locator('.guest').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-type')));
     const fronts = await page.locator('.lane').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-type') || ''));
