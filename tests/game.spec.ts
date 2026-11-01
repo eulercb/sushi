@@ -413,14 +413,14 @@ test('real completed orders appear in local rankings after reload', async ({ pag
 test('a full belt with a matching plate keeps rolling until a guest eats', async ({ page }) => {
   test.setTimeout(150000);
   // Start with the clock paused so every belt movement is explicitly advanced.
-  await start(page, '2026-01-01T12:00:00.001Z', true);
+  await start(page, '2026-01-01T12:00:00.065Z', true);
   // Accumulate unwanted plates through ordinary play, allowing earlier matches
   // to be eaten. This seed reaches 39 unmatched plates with a matching front.
   let ready = false;
   for (let i = 0; i < 600; i++) {
     const requests = await page.locator('.guest').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-type')));
     const fronts = await page.locator('.lane').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-type')));
-    if (await page.locator('#capacity').textContent() === '39 / 40' &&
+    if (requests.every(Boolean) && await page.locator('#capacity').textContent() === '39 / 40' &&
         !(await page.locator('#status').textContent())?.includes('queued') && fronts.some(type => requests.includes(type))) {
       const plates = await page.locator('.plate').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-type')));
       if (plates.length === 39 && plates.every(type => !requests.includes(type))) { ready = true; break; }

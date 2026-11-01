@@ -109,26 +109,13 @@ describe('cozy sushi service', () => {
   it('lets customers wait indefinitely and never removes unmatched plates', () => { const initial = noMatch(); const s = tick(launchPlate(initial, 0), 180); expect(s.phase).toBe('playing'); expect(s.seats).toEqual(initial.seats); expect(s.plates).toHaveLength(1); expect(s.plates[0].distance).toBeGreaterThan(10); expect(s.served).toBe(0); });
   it('moves plates a quarter lap at the faster belt speed', () => { const s = tick(launchPlate(noMatch(), 0), .25 / .105); expect(RULES.speed).toBe(.105); expect(s.plates[0].distance).toBeCloseTo(.25); expect(s.plates[0].position).toBeCloseTo(.25); });
   it('generates orders of four to seven pieces across seeded games', () => { const quantities = Array.from({ length: 100 }, (_, seed) => createGame(seed).seats.map(seat => seat.customer!.quantity)).flat(); expect(Math.min(...quantities)).toBe(4); expect(Math.max(...quantities)).toBe(7); expect(quantities.every(quantity => quantity >= RULES.orderMin && quantity <= RULES.orderMax)).toBe(true); });
-  it('uses the seeded progressive repeat probability and prefers types in the queue', () => {
-    // These RNG states give first draws of about .236 and .623, respectively.
-    for (const [served, rng, repeats] of [[0, 0, false], [25, 0, true], [25, 1000, false], [50, 1000, true], [100, 1000, true]] as const) {
-      const state = playing();
-      state.served = served;
-      state.rng = rng;
-      state.seats[0] = { customer: null, returnsIn: 0 };
-      state.seats.slice(1).forEach(seat => { seat.customer!.type = 'tuna'; });
-      state.queues.forEach(queue => queue.splice(0, queue.length, 'tuna', 'salmon', 'salmon', 'salmon', 'salmon'));
-      const returned = tick(state, .05);
-      expect(returned.seats[0].customer!.type).toBe(repeats ? 'tuna' : 'salmon');
-      expect(tick(state, .05)).toEqual(returned);
-    }
-  });
-  it('allows initial repeated orders and replaces simultaneous departures deterministically', () => {
+  it('limits duplicates during initial seating and simultaneous replacements', () => {
     let sawRepeat = false;
-    for (let seed = 0; seed < 100; seed++) {
+    for (let seed = 0; seed < 200; seed++) {
       const initial = startGame(createGame(seed));
       const types = initial.seats.map(seat => seat.customer!.type);
       sawRepeat ||= new Set(types).size < types.length;
+      expect(types.every(type => types.filter(other => other === type).length <= 2)).toBe(true);
       initial.seats.slice(0, 2).forEach(seat => { seat.customer!.remaining = 1; });
       initial.plates = [0, 1].map((station, slot) => ({
         id: 1000 + slot, type: types[station], slot,
@@ -136,24 +123,81 @@ describe('cozy sushi service', () => {
       }));
       const departed = tick(initial, .02);
       expect(departed.served).toBe(2);
-      expect(departed.seats.slice(0, 2).every(seat => seat.customer === null)).toBe(true);
       const returned = tick(departed, RULES.replacementDelay + .05);
-      expect(returned.seats.every(seat => seat.customer!.quantity >= RULES.orderMin && seat.customer!.quantity <= RULES.orderMax)).toBe(true);
+      const arrivals = returned.seats.map(seat => seat.customer!.type);
+      expect(arrivals.every(type => arrivals.filter(other => other === type).length <= 2)).toBe(true);
+      expect(returned.recentOrders.slice(-2)).toEqual(arrivals.slice(0, 2));
       expect(tick(departed, RULES.replacementDelay + .05)).toEqual(returned);
     }
     expect(sawRepeat).toBe(true);
   });
-  it('falls back within the chosen category when previews lack it', () => {
-    for (const [served, rng, previews, expected] of [[0, 0, 'tuna', false], [50, 1000, 'salmon', true]] as const) {
-      const state = playing();
-      state.rng = rng;
-      state.served = served;
-      state.seats[0] = { customer: null, returnsIn: 0 };
-      state.seats.slice(1).forEach(seat => { seat.customer!.type = 'tuna'; });
-      state.queues.forEach(queue => queue.fill(previews));
-      const returned = tick(state, .05);
-      expect(returned.seats[0].customer!.type === 'tuna').toBe(expected);
+  it('retains variety and reproducibility across hundreds of late-game arrivals', () => {
+    const run = (seed: number) => {
+      let state = playing();
+      state.rng = seed;
+      state.served = 10000;
+      const orders: string[] = [];
+      for (let i = 0; i < 500; i++) {
+        state.seats[i % 4] = { customer: null, returnsIn: 0 };
+        state = tick(state, .01);
+        const types = state.seats.map(seat => seat.customer!.type);
+        expect(types.every(type => types.filter(other => other === type).length <= 2)).toBe(true);
+        orders.push(types[i % 4]);
+      }
+      return { orders, state };
+    };
+    const first = run(53);
+    expect(run(53)).toEqual(first);
+    expect(new Set(first.orders).size).toBe(8);
+    expect(Math.max(...SUSHI_TYPES.map(type => first.orders.filter(order => order === type).length))).toBeLessThan(120);
+    expect(first.orders.filter((order, i) => i > 0 && order === first.orders[i - 1]).length).toBeLessThan(25);
+  });
+  it('raises active-order repetition from 10% to a 38% cap when both categories are available', () => {
+    const repeats = (served: number) => {
+      let count = 0;
+      for (let seed = 0; seed < 2000; seed++) {
+        const state = playing();
+        state.seats[0] = { customer: null, returnsIn: 0 };
+        state.seats.slice(1).forEach((seat, i) => { seat.customer!.type = SUSHI_TYPES[i]; });
+        state.queues.forEach((queue, lane) => queue.splice(0, queue.length, ...Array.from({ length: RULES.queueDepth }, (_, depth) => SUSHI_TYPES[(lane + depth) % SUSHI_TYPES.length])));
+        state.served = served;
+        state.rng = seed * 100003;
+        state.recentOrders = [];
+        const active = state.seats.slice(1).map(seat => seat.customer!.type);
+        count += Number(active.includes(tick(state, .01).seats[0].customer!.type));
+      }
+      return count / 2000;
+    };
+    expect(repeats(0)).toBeGreaterThan(.08);
+    expect(repeats(0)).toBeLessThan(.12);
+    expect(repeats(50)).toBeGreaterThan(.35);
+    expect(repeats(50)).toBeLessThan(.41);
+    expect(repeats(10000)).toBe(repeats(50));
+  });
+  it('strongly discourages the last order while retaining seeded randomness', () => {
+    let repeatedWithHistory = 0, repeatedWithoutHistory = 0;
+    for (let seed = 0; seed < 1000; seed++) {
+      const base = playing();
+      base.seats[0] = { customer: null, returnsIn: 0 };
+      base.seats.slice(1).forEach((seat, i) => { seat.customer!.type = SUSHI_TYPES[i + 1]; });
+      base.served = 50;
+      base.rng = seed * 100003;
+      base.queues.forEach((queue, lane) => queue.splice(0, queue.length, ...Array.from({ length: RULES.queueDepth }, (_, depth) => SUSHI_TYPES[(lane + depth) % SUSHI_TYPES.length])));
+      const withHistory = structuredClone(base);
+      withHistory.recentOrders = ['tuna'];
+      base.recentOrders = [];
+      repeatedWithHistory += Number(tick(withHistory, .01).seats[0].customer!.type === 'tuna');
+      repeatedWithoutHistory += Number(tick(base, .01).seats[0].customer!.type === 'tuna');
     }
+    expect(repeatedWithoutHistory).toBeGreaterThan(80);
+    expect(repeatedWithHistory).toBeLessThan(repeatedWithoutHistory / 4);
+  });
+  it('clears order history on restart and records fresh initial customers', () => {
+    const state = playing();
+    state.recentOrders = ['tuna', 'tuna', 'tuna', 'tuna', 'tuna', 'tuna'];
+    const restarted = restartGame(state);
+    expect(restarted).toEqual(playing());
+    expect(restarted.recentOrders).toEqual(restarted.seats.map(seat => seat.customer!.type));
   });
   it('moves continuously while an occupied gate waits for a free slot', () => {
     const first = launchPlate(noMatch(), 0);

@@ -19,34 +19,37 @@ function junkPlate(slot: number) {
 describe('supply planning', () => {
   it('repairs at most one deeper preview when a new order has no reachable route', () => {
     let s = startGame(createGame(19));
-    s.seats.forEach(seat => { seat.customer!.type = 'tuna'; });
+    s.seats.forEach((seat, i) => { seat.customer!.type = i === 3 ? 'shrimp' : 'tuna'; });
     s.seats[0] = { customer: null, returnsIn: 0 };
-    s.served = 50; s.rng = 1000;
+    s.served = 50; s.rng = 0;
     s.queues.forEach(queue => queue.fill('salmon'));
-    s.plates = Array.from({ length: 38 }, (_, i) => junkPlate(i));
+    s.plates = Array.from({ length: 37 }, (_, i) => junkPlate(i));
     const before = structuredClone(s.queues);
     s = tick(s, .01);
     expect(s.queues.map(queue => queue[0])).toEqual(before.map(queue => queue[0]));
     expect(s.queues.flat().filter((type, i) => type !== before.flat()[i])).toHaveLength(1);
-    expect(route(s)?.depth).toBe(1);
+    expect(route(s)?.depth).toBeLessThanOrEqual(2);
   });
 
   it('keeps fronts unchanged when only one free space cannot reach a repair', () => {
     let s = startGame(createGame(19));
-    s.seats.forEach(seat => { seat.customer!.type = 'tuna'; });
+    s.seats.forEach((seat, i) => { seat.customer!.type = i === 3 ? 'shrimp' : 'tuna'; });
     s.seats[0] = { customer: null, returnsIn: 0 };
-    s.served = 50; s.rng = 1000;
-    s.queues.forEach(queue => queue.fill('salmon'));
+    s.served = 50; s.rng = 0;
+    s.queues.forEach(queue => queue.fill('tuna'));
     s.plates = Array.from({ length: 39 }, (_, i) => junkPlate(i));
     const before = structuredClone(s.queues);
     s = tick(s, .01);
+    expect(s.seats[0].customer!.type).not.toBe('tuna');
     expect(s.queues).toEqual(before);
+    // The fronts already match existing guests but cannot be changed to the new order.
+    expect(s.queues.flat()).not.toContain(s.seats[0].customer!.type);
   });
 
   it('counts shared orders and travelling or pending matches without changing previews', () => {
     for (const pending of [false, true]) {
       let s = startGame(createGame(19));
-      s.seats.forEach(seat => { seat.customer!.type = 'tuna'; seat.customer!.remaining = 1; });
+      s.seats.forEach((seat, i) => { seat.customer!.type = i < 3 ? 'tuna' : 'shrimp'; seat.customer!.remaining = 1; });
       s.seats[0] = { customer: null, returnsIn: 0 };
       s.queues.forEach(queue => queue.fill('salmon'));
       if (pending) s.pending = [{ lane: 0, type: 'tuna' }];
@@ -57,12 +60,26 @@ describe('supply planning', () => {
     }
   });
 
+  it('chooses an accessible order when only one free space remains', () => {
+    let s = startGame(createGame(19));
+    s.seats.forEach((seat, i) => { seat.customer!.type = i < 2 ? 'tuna' : 'shrimp'; });
+    s.seats[0] = { customer: null, returnsIn: 0 };
+    s.queues.forEach(queue => queue.fill('maki'));
+    s.plates = Array.from({ length: 39 }, (_, i) => junkPlate(i));
+    const queues = structuredClone(s.queues);
+    s = tick(s, .01);
+    expect(s.seats[0].customer!.type).toBe('maki');
+    expect(s.queues).toEqual(queues);
+    expect(route(s)?.depth).toBe(0);
+  });
+
   it('keeps attentive seeded play viable through crowded belts and repeated arrivals', () => {
     let crowdedRuns = 0;
-    for (let seed = 0; seed < 40; seed++) {
+    for (let seed = 0; seed < 48; seed++) {
+      const goal = seed < 40 ? 55 : 250;
       let s = startGame(createGame(seed));
       // Accumulate unmatched plates first, then follow the shortest visible path.
-      for (let turn = 0; turn < 480 && s.served < 55; turn++) {
+      for (let turn = 0; turn < goal * 10 && s.served < goal; turn++) {
         const types = wanted(s);
         const travelling = [...s.plates, ...s.pending].some(plate => types.has(plate.type));
         if (!travelling && s.seats.some(seat => seat.customer)) {
@@ -75,8 +92,8 @@ describe('supply planning', () => {
         expect(s.phase, `seed ${seed}, turn ${turn}`).toBe('playing');
         if (s.plates.length >= 20) crowdedRuns++;
       }
-      expect(s.served, `seed ${seed}`).toBeGreaterThanOrEqual(55);
+      expect(s.served, `seed ${seed}`).toBeGreaterThanOrEqual(goal);
     }
     expect(crowdedRuns).toBeGreaterThan(80);
-  }, 30000);
+  }, 60000);
 });

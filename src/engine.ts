@@ -9,7 +9,7 @@ export interface Seat { customer: Customer | null; returnsIn: number; }
 export interface Plate { id: number; type: SushiType; slot: number; position: number; distance: number; }
 export interface GameEvent { id: number; kind: 'serve' | 'complete' | 'launch'; type?: SushiType; station?: number; }
 export interface LaunchRequest { lane: number; type: SushiType; }
-export interface GameState { pending: LaunchRequest[]; phase: Phase; seed: number; rng: number; nextId: number; elapsed: number; served: number; delivered: number; beltPhase: number; queues: SushiType[][]; seats: Seat[]; plates: Plate[]; events: GameEvent[]; }
+export interface GameState { recentOrders: SushiType[]; pending: LaunchRequest[]; phase: Phase; seed: number; rng: number; nextId: number; elapsed: number; served: number; delivered: number; beltPhase: number; queues: SushiType[][]; seats: Seat[]; plates: Plate[]; events: GameEvent[]; }
 const wrap = (value: number) => ((value % 1) + 1) % 1;
 function random(s: GameState): number { s.rng = (Math.imul(s.rng, 1664525) + 1013904223) >>> 0; return s.rng / 4294967296; }
 function sushi(s: GameState): SushiType { return SUSHI_TYPES[Math.floor(random(s) * SUSHI_TYPES.length)]; }
@@ -73,21 +73,40 @@ function nextSupply(s: GameState): SushiType {
   return missing.length && random(s) < .7 ? missing[Math.floor(random(s) * missing.length)] : sushi(s);
 }
 function customer(s: GameState): Customer {
-  const occupied = new Set(s.seats.flatMap(seat => seat.customer ? [seat.customer.type] : []));
-  const queued = [...new Set(s.queues.flat())];
-  // The chance of repeating an active request rises from 10% to 65% by 50 guests.
-  const repeatChance = .10 + .55 * Math.min(Math.max(s.served, 0), 50) / 50;
-  const repeat = occupied.size > 0 && random(s) < repeatChance;
-  const preferred = queued.filter(type => repeat ? occupied.has(type) : !occupied.has(type));
-  // If the chosen category is absent from previews, still honor the category.
-  const available = preferred.length ? preferred : SUSHI_TYPES.filter(type => repeat ? occupied.has(type) : !occupied.has(type));
-  const type = available[Math.floor(random(s) * available.length)];
+  const counts = new Map<SushiType, number>();
+  for (const { customer } of s.seats) if (customer) counts.set(customer.type, (counts.get(customer.type) ?? 0) + 1);
+  const eligible = SUSHI_TYPES.filter(type => (counts.get(type) ?? 0) < 2);
+  const free = RULES.capacity - s.plates.length - s.pending.length;
+  // With little room and no travelling match, an accessible order can keep play
+  // alive where a deeper supply repair would be too expensive or impossible.
+  const reachable = new Set(s.queues.flatMap(queue => queue.slice(0, Math.min(Math.max(free, 0), 3))));
+  const urgent = !hasTravellingMatch(s) && free <= 2 ? eligible.filter(type => reachable.has(type)) : [];
+  const candidates = urgent.length ? urgent : eligible;
+  const repeatChance = .10 + .28 * Math.min(Math.max(s.served, 0), 50) / 50;
+  const repeat = random(s) < repeatChance;
+  const category = candidates.filter(type => repeat ? counts.has(type) : !counts.has(type));
+  const pool = category.length ? category : candidates;
+  const visible = new Set(s.queues.flat());
+  const preferred = pool.filter(type => visible.has(type));
+  const options = preferred.length ? preferred : pool;
+  // Recent orders are bounded and shared by initial seating and every arrival.
+  // Penalize the last order especially strongly, and other recent repeats mildly.
+  const weights = options.map(type => {
+    const occurrences = s.recentOrders.filter(order => order === type).length;
+    return Math.pow(.55, occurrences) * (s.recentOrders.at(-1) === type ? .08 : 1);
+  });
+  let draw = random(s) * weights.reduce((sum, weight) => sum + weight, 0);
+  let index = 0;
+  while (index < options.length - 1 && draw >= weights[index]) draw -= weights[index++];
+  const type = options[index];
+  s.recentOrders.push(type);
+  s.recentOrders = s.recentOrders.slice(-6);
   const quantity = RULES.orderMin + Math.floor(random(s) * (RULES.orderMax - RULES.orderMin + 1));
   return { id: s.nextId++, type, quantity, remaining: quantity };
 }
 function event(s: GameState, detail: Omit<GameEvent, 'id'>) { s.events.push({ id: s.nextId++, ...detail }); s.events = s.events.slice(-30); }
 export function createGame(seed = 42): GameState {
-  const s: GameState = { pending: [], phase: 'ready', seed: seed >>> 0, rng: seed >>> 0, nextId: 1, elapsed: 0, served: 0, delivered: 0, beltPhase: 0, queues: [], seats: [], plates: [], events: [] };
+  const s: GameState = { recentOrders: [], pending: [], phase: 'ready', seed: seed >>> 0, rng: seed >>> 0, nextId: 1, elapsed: 0, served: 0, delivered: 0, beltPhase: 0, queues: [], seats: [], plates: [], events: [] };
   // A seeded bag gives every variety a place in the previews, with five distinct fronts.
   const bag: SushiType[] = [];
   while (bag.length < RULES.laneCount * RULES.queueDepth) {
